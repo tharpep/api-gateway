@@ -16,7 +16,6 @@ api-gateway/
 │       ├── health.py           # /health - status & API directory
 │       ├── notify.py           # /notify - Pushover notifications
 │       ├── ai.py               # /ai - AI API gateway (placeholder)
-│       ├── finance.py          # /finance - Plaid integration
 │       └── google.py           # /google - Google services gateway
 ├── .env.example                # Template for secrets
 ├── .gitignore
@@ -54,12 +53,6 @@ api-gateway/
 - Stub router only - full implementation imported later
 - Will proxy to Claude, ChatGPT, OpenRouter, DeepSeek
 
-### `/finance`
-- `POST /finance/link/token` - Create Plaid Link token
-- `POST /finance/link/exchange` - Exchange public token for access token
-- `GET /finance/accounts` - List connected accounts
-- `GET /finance/transactions` - Fetch transactions
-- OAuth flow with Plaid (sandbox initially)
 
 ### `/google`
 - `GET /google/auth` - Initiate OAuth flow
@@ -79,7 +72,6 @@ api-gateway/
 | Service | Auth Type | Storage |
 |---------|-----------|---------|
 | Pushover | API Key | `.env` |
-| Plaid | API Keys + OAuth | `.env` + token store |
 | Google | OAuth 2.0 | Token store (file/db) |
 | AI APIs | API Keys | `.env` |
 
@@ -99,19 +91,15 @@ ALLOWED_ORIGINS=http://localhost:3000
 PUSHOVER_USER_KEY=
 PUSHOVER_API_TOKEN=
 
-# Plaid
-PLAID_CLIENT_ID=
-PLAID_SECRET=
-PLAID_ENV=sandbox
+
 
 # Google OAuth
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=
 
-# AI (placeholder)
+# AI
 ANTHROPIC_API_KEY=
-OPENAI_API_KEY=
 ```
 
 ---
@@ -144,19 +132,14 @@ Target: **Cloud Run** (serverless container)
 - [ ] `/notify` Pushover integration
 - [ ] Notification helper for cross-endpoint use
 
-### Phase 3: Finance (Plaid)
-- [ ] Plaid client setup
-- [ ] Link token flow
-- [ ] Account/transaction retrieval
-- [ ] Webhook handling (optional)
 
-### Phase 4: Google Integration
+### Phase 3: Google Integration
 - [ ] OAuth 2.0 flow
 - [ ] Token refresh handling
 - [ ] Service-specific sub-routers
 - [ ] Rate limiting considerations
 
-### Phase 5: AI Gateway
+### Phase 4: AI Gateway
 - [ ] Import existing implementation
 - [ ] Unified interface for multiple providers
 

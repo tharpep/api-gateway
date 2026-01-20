@@ -1,6 +1,6 @@
 # API Gateway
 
-Personal API gateway built with FastAPI. Centralized entry point for notifications, finance tracking, Google services, and AI APIs.
+Personal API gateway built with FastAPI. Centralized entry point for notifications, Google services, and AI APIs.
 
 ## Endpoints
 
@@ -9,7 +9,6 @@ Personal API gateway built with FastAPI. Centralized entry point for notificatio
 | `/health` | Gateway status and API directory |
 | `/notify` | Pushover notification manager |
 | `/ai` | AI API gateway (Claude, ChatGPT, OpenRouter, DeepSeek) |
-| `/finance` | Plaid integration for financial tracking |
 | `/google` | Google services (Calendar, Tasks, Gmail, Drive, Photos) |
 
 ## Setup
