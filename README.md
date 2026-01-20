@@ -1,15 +1,18 @@
 # API Gateway
 
-Personal API gateway built with FastAPI. Centralized entry point for notifications, Google services, and AI APIs.
+Personal API gateway built with FastAPI. Centralized entry point for notifications, calendar, tasks, email, storage, and AI APIs.
 
 ## Endpoints
 
-| Route | Description |
-|-------|-------------|
-| `/health` | Gateway status and API directory |
-| `/notify` | Pushover notification manager |
-| `/ai` | AI API gateway (Claude, ChatGPT, OpenRouter, DeepSeek) |
-| `/google` | Google services (Calendar, Tasks, Gmail, Drive, Photos) |
+| Route | Description | Provider |
+|-------|-------------|----------|
+| `/health` | Gateway status and API directory | - |
+| `/notify` | Push notifications | Pushover |
+| `/ai` | AI API gateway | Claude, ChatGPT, OpenRouter, DeepSeek |
+| `/calendar` | Calendar events | Google Calendar → Outlook |
+| `/tasks` | Task management | Google Tasks → Todoist |
+| `/email` | Email access and sending | Gmail → Outlook |
+| `/storage` | File and photo storage | Google Drive/Photos → Homelab |
 
 ## Setup
 

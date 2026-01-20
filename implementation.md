@@ -16,7 +16,10 @@ api-gateway/
 │       ├── health.py           # /health - status & API directory
 │       ├── notify.py           # /notify - Pushover notifications
 │       ├── ai.py               # /ai - AI API gateway (placeholder)
-│       └── google.py           # /google - Google services gateway
+│       ├── calendar.py         # /calendar - Google Calendar → Outlook
+│       ├── tasks.py            # /tasks - Google Tasks → Todoist
+│       ├── email.py            # /email - Gmail → Outlook
+│       └── storage.py          # /storage - Drive/Photos → Homelab
 ├── .env.example                # Template for secrets
 ├── .gitignore
 ├── pyproject.toml              # Poetry dependencies
@@ -53,17 +56,40 @@ api-gateway/
 - Stub router only - full implementation imported later
 - Will proxy to Claude, ChatGPT, OpenRouter, DeepSeek
 
+### `/calendar`
+- `GET /calendar/auth` - Initiate OAuth flow
+- `GET /calendar/callback` - OAuth callback
+- `GET /calendar/events` - List events
+- `GET /calendar/today` - Today's events
+- `POST /calendar/events` - Create event
+- Initial: Google Calendar | Future: Outlook, Apple Calendar
 
-### `/google`
-- `GET /google/auth` - Initiate OAuth flow
-- `GET /google/callback` - OAuth callback handler
-- Sub-endpoints per service:
-  - `/google/calendar/*` - Calendar operations
-  - `/google/tasks/*` - Tasks operations
-  - `/google/gmail/*` - Gmail operations
-  - `/google/drive/*` - Drive operations
-  - `/google/photos/*` - Photos operations
-- OAuth 2.0 with Google APIs
+### `/tasks`
+- `GET /tasks/lists` - Get task lists
+- `GET /tasks/lists/{id}/tasks` - Get tasks
+- `POST /tasks/lists/{id}/tasks` - Create task
+- `PATCH /tasks/lists/{id}/tasks/{id}` - Update task
+- `DELETE /tasks/lists/{id}/tasks/{id}` - Delete task
+- Initial: Google Tasks | Future: Todoist, Notion
+
+### `/email`
+- `GET /email/auth` - Initiate OAuth flow
+- `GET /email/callback` - OAuth callback
+- `GET /email/unread` - Unread count + summaries
+- `GET /email/messages` - List messages
+- `GET /email/messages/{id}` - Get message
+- `POST /email/send` - Send email
+- Initial: Gmail | Future: Outlook, SMTP
+
+### `/storage`
+- `GET /storage/auth` - Initiate OAuth flow
+- `GET /storage/callback` - OAuth callback
+- `GET /storage/files` - List files (Drive)
+- `GET /storage/files/{id}` - Get file
+- `POST /storage/files` - Upload file
+- `GET /storage/photos` - List photos
+- `GET /storage/photos/albums` - List albums
+- Initial: Google Drive + Photos | Future: Homelab NAS, S3
 
 ---
 
@@ -72,7 +98,7 @@ api-gateway/
 | Service | Auth Type | Storage |
 |---------|-----------|---------|
 | Pushover | API Key | `.env` |
-| Google | OAuth 2.0 | Token store (file/db) |
+| Google (all) | OAuth 2.0 | Token store (SQLite) |
 | AI APIs | API Keys | `.env` |
 
 > [!NOTE]
@@ -91,9 +117,7 @@ ALLOWED_ORIGINS=http://localhost:3000
 PUSHOVER_USER_KEY=
 PUSHOVER_API_TOKEN=
 
-
-
-# Google OAuth
+# Google OAuth (shared across calendar, tasks, email, storage)
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=
@@ -117,29 +141,31 @@ Target: **Cloud Run** (serverless container)
 
 ## Implementation Phases
 
-### Phase 1: Scaffolding (Current)
+### Phase 1: Scaffolding
 - [x] Implementation plan
-- [ ] Project structure + `main.py`
-- [ ] Config/settings module
-- [ ] Router stubs for all endpoints
-- [ ] `.env.example`, `.gitignore`
-- [ ] `pyproject.toml` (Poetry)
-- [ ] `README.md`
-- [ ] `Dockerfile`
+- [x] Project structure + `main.py`
+- [x] Config/settings module
+- [x] Router stubs for all endpoints
+- [x] `.env.example`, `.gitignore`
+- [x] `pyproject.toml` (Poetry)
+- [x] `README.md`
+- [x] `Dockerfile`
 
 ### Phase 2: Core Endpoints
 - [ ] `/health` endpoint with directory
 - [ ] `/notify` Pushover integration
 - [ ] Notification helper for cross-endpoint use
 
-
-### Phase 3: Google Integration
-- [ ] OAuth 2.0 flow
+### Phase 3: Google OAuth
+- [ ] Shared OAuth 2.0 flow (one token for all Google services)
+- [ ] Token storage (SQLite)
 - [ ] Token refresh handling
-- [ ] Service-specific sub-routers
+
+### Phase 4: Calendar, Tasks, Email, Storage
+- [ ] Implement each endpoint against Google APIs
 - [ ] Rate limiting considerations
 
-### Phase 4: AI Gateway
+### Phase 5: AI Gateway
 - [ ] Import existing implementation
 - [ ] Unified interface for multiple providers
 
@@ -152,13 +178,14 @@ Target: **Cloud Run** (serverless container)
 | Token Storage | SQLite → GCP Secret Manager | SQLite for local dev, Secret Manager for Cloud Run (free tier, native integration) |
 | User Model | Single-user | Personal gateway, no auth layer needed |
 | Dependency Management | Poetry | Lock files, `pyproject.toml`, cleaner Dockerfile |
+| Endpoint Abstraction | Domain-based | `/calendar`, `/email` instead of `/google` - extensible to other providers |
 
 ---
 
 ## Verification Plan
 
 ### Automated
-- `uvicorn app.main:app --reload` - Dev server starts without errors
+- `poetry run uvicorn app.main:app --reload` - Dev server starts without errors
 - `curl http://localhost:8000/health` - Returns 200 with endpoint list
 - `curl http://localhost:8000/docs` - OpenAPI docs accessible
 
