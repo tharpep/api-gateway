@@ -26,6 +26,8 @@ class Settings(BaseSettings):
 
     # AI
     anthropic_api_key: str = ""
+    openrouter_api_key: str = ""
+    default_ai_model: str = "claude-sonnet-4-5-20250929"
 
 
 settings = Settings()

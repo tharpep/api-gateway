@@ -24,7 +24,7 @@ class HealthResponse(BaseModel):
 ENDPOINTS = [
     EndpointInfo(path="/health", description="Gateway status and API directory"),
     EndpointInfo(path="/notify", description="Push notifications", provider="Pushover"),
-    EndpointInfo(path="/ai", description="AI API gateway", provider="Claude, OpenRouter"),
+    EndpointInfo(path="/ai", description="AI API gateway (OpenAI-compatible)", provider="Anthropic, OpenRouter"),
     EndpointInfo(path="/calendar", description="Calendar events", provider="Google Calendar"),
     EndpointInfo(path="/tasks", description="Task management", provider="Google Tasks"),
     EndpointInfo(path="/email", description="Email access", provider="Gmail"),
