@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import health, notify, ai, calendar, tasks, email, storage
+from app.routers import health, notify, ai, calendar, tasks, email, storage, status, context, webhooks
 
 app = FastAPI(
     title="API Gateway",
@@ -29,4 +29,6 @@ app.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
 app.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 app.include_router(email.router, prefix="/email", tags=["email"])
 app.include_router(storage.router, prefix="/storage", tags=["storage"])
-
+app.include_router(status.router, prefix="/status", tags=["status"])
+app.include_router(context.router, prefix="/context", tags=["context"])
+app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
