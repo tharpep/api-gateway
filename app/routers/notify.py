@@ -1,5 +1,3 @@
-"""Pushover notification endpoint."""
-
 from enum import IntEnum
 
 import httpx
@@ -36,7 +34,7 @@ class NotificationResponse(BaseModel):
 
 @router.post("", response_model=NotificationResponse)
 async def send_notification(notification: NotificationRequest):
-    """Send notification via Pushover."""
+
     if not settings.pushover_user_key or not settings.pushover_api_token:
         raise HTTPException(
             status_code=503,
@@ -56,7 +54,6 @@ async def send_notification(notification: NotificationRequest):
     if notification.url_title:
         payload["url_title"] = notification.url_title
 
-    # Emergency priority requires retry/expire params
     if notification.priority == Priority.EMERGENCY:
         payload["retry"] = 60       # Retry every 60 seconds
         payload["expire"] = 3600   
