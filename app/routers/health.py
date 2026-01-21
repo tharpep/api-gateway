@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 router = APIRouter(tags=["health"])
 
-# Track startup time for uptime calculation
 _startup_time = datetime.now(timezone.utc)
 
 
