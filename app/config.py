@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # App
     debug: bool = False
-    allowed_origins: list[str] = ["http://localhost:3000"]
+    allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
     # Pushover
     pushover_user_key: str = ""
@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # AI
     anthropic_api_key: str = ""
     openrouter_api_key: str = ""
-    default_ai_model: str = "claude-sonnet-4-5-20250929"
+    default_ai_model: str = "claude-haiku-4-5-20251001"
 
 
 settings = Settings()
