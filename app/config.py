@@ -14,11 +14,6 @@ class Settings(BaseSettings):
     pushover_user_key: str = ""
     pushover_api_token: str = ""
 
-    # Plaid
-    plaid_client_id: str = ""
-    plaid_secret: str = ""
-    plaid_env: str = "sandbox"
-
     # Google OAuth
     google_client_id: str = ""
     google_client_secret: str = ""
