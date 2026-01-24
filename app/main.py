@@ -1,10 +1,11 @@
 """API Gateway - FastAPI application entry point."""
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import health, notify, ai, calendar, tasks, email, storage, context, webhooks
+from app.dependencies import verify_api_key
+from app.routers import ai, calendar, context, email, health, notify, storage, tasks, webhooks
 
 app = FastAPI(
     title="API Gateway",
@@ -21,14 +22,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
+# Routers (health is public; others require API key when API_KEY is set)
 app.include_router(health.router)
-app.include_router(notify.router, prefix="/notify", tags=["notify"])
-app.include_router(ai.router, prefix="/ai", tags=["ai"])
-app.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
-app.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
-app.include_router(email.router, prefix="/email", tags=["email"])
-app.include_router(storage.router, prefix="/storage", tags=["storage"])
-app.include_router(context.router, prefix="/context", tags=["context"])
-app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
+app.include_router(
+    notify.router, prefix="/notify", tags=["notify"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(ai.router, prefix="/ai", tags=["ai"], dependencies=[Depends(verify_api_key)])
+app.include_router(
+    calendar.router, prefix="/calendar", tags=["calendar"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    tasks.router, prefix="/tasks", tags=["tasks"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    email.router, prefix="/email", tags=["email"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    storage.router, prefix="/storage", tags=["storage"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    context.router, prefix="/context", tags=["context"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    webhooks.router, prefix="/webhooks", tags=["webhooks"], dependencies=[Depends(verify_api_key)]
+)
 

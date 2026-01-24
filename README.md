@@ -27,6 +27,15 @@ cp .env.example .env
 poetry run uvicorn app.main:app --reload
 ```
 
+## Authentication
+
+When `API_KEY` is set in the environment, all routes except `/health` and `/docs` require a valid key. Send it via:
+
+- **Header:** `X-API-Key: <your-key>`
+- **Header:** `Authorization: Bearer <your-key>`
+
+If `API_KEY` is empty, no authentication is required (suitable for local dev). For production (e.g. Cloud Run), set `API_KEY` in the service environment or via GCP Secret Manager.
+
 ## Deployment
 
 Deploys to GCP Cloud Run via Docker.
@@ -41,7 +50,7 @@ docker run -p 8000:8000 --env-file .env api-gateway
 
 ### CI/CD (GitHub Actions)
 
-Deploys on push to `main`. One-time GCP setup in the Cloud Console: create/select project, enable Cloud Run and Artifact Registry APIs, create Artifact Registry repo `api-gateway` in `us-central1`, create a service account with Cloud Run Admin, Artifact Registry Writer, and Service Account User, create a JSON key and add GitHub secrets `GCP_SA_KEY` and `GCP_PROJECT_ID`. Set the Cloud Run service env vars in the Console after the first deploy.
+Deploys on push to `main`. One-time GCP setup in the Cloud Console: create/select project, enable Cloud Run and Artifact Registry APIs, create Artifact Registry repo `api-gateway` in `us-central1`, create a service account with Cloud Run Admin, Artifact Registry Writer, and Service Account User, create a JSON key and add GitHub secrets `GCP_SA_KEY` and `GCP_PROJECT_ID`. Set the Cloud Run service env vars in the Console after the first deploy (including `API_KEY` for production).
 
 ## API Docs
 

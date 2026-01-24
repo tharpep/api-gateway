@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     # App
     debug: bool = False
     allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+    # API key (optional): if set, required on all routes except /health and /docs
+    api_key: str = ""
 
     # Pushover
     pushover_user_key: str = ""
