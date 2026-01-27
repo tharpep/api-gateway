@@ -5,19 +5,6 @@ from fastapi import APIRouter
 router = APIRouter()
 
 
-@router.get("/auth")
-async def initiate_oauth():
-    """Initiate Google OAuth flow for Drive/Photos access."""
-    # TODO: Implement OAuth initiation
-    return {"status": "not implemented"}
-
-
-@router.get("/callback")
-async def oauth_callback():
-    """Handle OAuth callback."""
-    # TODO: Implement OAuth callback
-    return {"status": "not implemented"}
-
 
 # Drive operations
 @router.get("/files")
