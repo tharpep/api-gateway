@@ -1,7 +1,10 @@
 """API Gateway - FastAPI application entry point."""
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.dependencies import verify_api_key
@@ -12,6 +15,10 @@ app = FastAPI(
     description="Personal API gateway for centralized service access",
     version="0.1.0",
 )
+
+# Rate limiting
+app.state.limiter = ai.limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
 app.add_middleware(

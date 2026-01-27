@@ -2,9 +2,11 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.providers import AnthropicProvider, OpenRouterProvider
@@ -17,6 +19,9 @@ from app.providers.base import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Rate limiter: 60 requests per minute per IP
+limiter = Limiter(key_func=get_remote_address)
 
 _anthropic: AnthropicProvider | None = None
 _openrouter: OpenRouterProvider | None = None
@@ -96,10 +101,11 @@ async def list_models():
 
 
 @router.post("/v1/chat/completions")
-async def chat_completions(request: ChatRequest):
-    model = request.model or settings.default_ai_model
+@limiter.limit("60/minute")
+async def chat_completions(request: Request, chat_request: ChatRequest):
+    model = chat_request.model or settings.default_ai_model
 
-    if not request.messages:
+    if not chat_request.messages:
         raise HTTPException(400, "messages is required")
 
     result = _get_provider_for_model(model)
@@ -111,14 +117,14 @@ async def chat_completions(request: ChatRequest):
 
     internal_request = ChatCompletionRequest(
         model=model,
-        messages=request.messages,
-        stream=request.stream,
-        max_tokens=request.max_tokens,
-        temperature=request.temperature,
+        messages=chat_request.messages,
+        stream=chat_request.stream,
+        max_tokens=chat_request.max_tokens,
+        temperature=chat_request.temperature,
     )
 
     try:
-        if request.stream:
+        if chat_request.stream:
             return StreamingResponse(
                 provider.chat_stream(internal_request),
                 media_type="text/event-stream",
