@@ -20,7 +20,6 @@ from app.providers.base import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Rate limiter: 60 requests per minute per IP
 limiter = Limiter(key_func=get_remote_address)
 
 _anthropic: AnthropicProvider | None = None

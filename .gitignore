@@ -27,3 +27,4 @@ Thumbs.db
 *.db
 *.sqlite
 tokens/
+get_google_token.py
