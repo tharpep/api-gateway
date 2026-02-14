@@ -18,6 +18,16 @@ CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar.freebusy"
 ]
 
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+]
+
+TASKS_SCOPES = [
+    "https://www.googleapis.com/auth/tasks.readonly",
+]
+
+ALL_SCOPES = CALENDAR_SCOPES + GMAIL_SCOPES + TASKS_SCOPES
+
 
 class TokenData(BaseModel):
     access_token: str
