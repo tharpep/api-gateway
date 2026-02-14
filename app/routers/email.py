@@ -173,6 +173,16 @@ async def get_unread(max_results: int = Query(default=20, ge=1, le=50)):
     return EmailResponse(messages=messages, count=len(messages))
 
 
+@router.get("/search", response_model=EmailResponse)
+async def search_email(
+    q: str = Query(description="Gmail search query, e.g. 'from:alice subject:meeting'"),
+    max_results: int = Query(default=20, ge=1, le=50),
+):
+    """Search emails using Gmail query syntax."""
+    messages = await _fetch_messages(q, max_results=max_results)
+    return EmailResponse(messages=messages, count=len(messages))
+
+
 @router.get("/messages/{message_id}", response_model=EmailMessageDetail)
 async def get_message(message_id: str):
     """Get a specific message with full decoded body."""

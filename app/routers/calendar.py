@@ -133,6 +133,17 @@ async def get_events(days: int = Query(default=7, ge=1, le=30)):
     return CalendarResponse(events=events, count=len(events))
 
 
+class BusySlot(BaseModel):
+    start: str
+    end: str
+
+
+class AvailabilityResponse(BaseModel):
+    time_min: str
+    time_max: str
+    busy: list[BusySlot]
+
+
 class CreateEventRequest(BaseModel):
     title: str
     start: str                  # ISO 8601 datetime or date
@@ -255,4 +266,47 @@ async def delete_event(event_id: str):
 
     if response.status_code not in (200, 204):
         raise HTTPException(502, f"Google Calendar API error: {response.text}")
+
+
+@router.get("/availability", response_model=AvailabilityResponse)
+async def get_availability(
+    date: str | None = Query(default=None, description="Start date (YYYY-MM-DD), defaults to today"),
+    days: int = Query(default=1, ge=1, le=7),
+):
+    """Get busy time slots for the primary calendar (Google freebusy API)."""
+    tz = ZoneInfo(DEFAULT_TIMEZONE)
+
+    if date:
+        start = datetime.fromisoformat(date).replace(tzinfo=tz)
+    else:
+        now = datetime.now(tz)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    end = start + timedelta(days=days)
+    access_token = await _get_access_token()
+
+    payload = {
+        "timeMin": start.isoformat(),
+        "timeMax": end.isoformat(),
+        "items": [{"id": "primary"}],
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{GOOGLE_CALENDAR_API}/freeBusy",
+            json=payload,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+
+    data = response.json()
+    busy_raw = data.get("calendars", {}).get("primary", {}).get("busy", [])
+
+    return AvailabilityResponse(
+        time_min=start.isoformat(),
+        time_max=end.isoformat(),
+        busy=[BusySlot(start=s["start"], end=s["end"]) for s in busy_raw],
+    )
 
