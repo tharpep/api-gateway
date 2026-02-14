@@ -132,3 +132,127 @@ async def get_events(days: int = Query(default=7, ge=1, le=30)):
     events = await _fetch_events(start_of_day, end_date)
     return CalendarResponse(events=events, count=len(events))
 
+
+class CreateEventRequest(BaseModel):
+    title: str
+    start: str                  # ISO 8601 datetime or date
+    end: str                    # ISO 8601 datetime or date
+    all_day: bool = False
+    location: str | None = None
+    description: str | None = None
+    timezone: str = DEFAULT_TIMEZONE
+
+
+class UpdateEventRequest(BaseModel):
+    title: str | None = None
+    start: str | None = None
+    end: str | None = None
+    location: str | None = None
+    description: str | None = None
+    timezone: str = DEFAULT_TIMEZONE
+
+
+@router.post("/events", response_model=CalendarEvent, status_code=201)
+async def create_event(body: CreateEventRequest):
+    """Create a new calendar event."""
+    access_token = await _get_access_token()
+
+    if body.all_day:
+        payload = {
+            "summary": body.title,
+            "start": {"date": body.start},
+            "end": {"date": body.end},
+        }
+    else:
+        payload = {
+            "summary": body.title,
+            "start": {"dateTime": body.start, "timeZone": body.timezone},
+            "end": {"dateTime": body.end, "timeZone": body.timezone},
+        }
+
+    if body.location:
+        payload["location"] = body.location
+    if body.description:
+        payload["description"] = body.description
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
+            json=payload,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code not in (200, 201):
+        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+
+    item = response.json()
+    start = item.get("start", {})
+    end = item.get("end", {})
+    all_day = "date" in start
+
+    return CalendarEvent(
+        id=item["id"],
+        title=item.get("summary", "(No title)"),
+        start=start.get("date") or start.get("dateTime", ""),
+        end=end.get("date") or end.get("dateTime", ""),
+        all_day=all_day,
+        location=item.get("location"),
+    )
+
+
+@router.patch("/events/{event_id}", response_model=CalendarEvent)
+async def update_event(event_id: str, body: UpdateEventRequest):
+    """Update an existing calendar event."""
+    access_token = await _get_access_token()
+
+    payload: dict = {}
+    if body.title is not None:
+        payload["summary"] = body.title
+    if body.location is not None:
+        payload["location"] = body.location
+    if body.description is not None:
+        payload["description"] = body.description
+    if body.start is not None:
+        payload["start"] = {"dateTime": body.start, "timeZone": body.timezone}
+    if body.end is not None:
+        payload["end"] = {"dateTime": body.end, "timeZone": body.timezone}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.patch(
+            f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}",
+            json=payload,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+
+    item = response.json()
+    start = item.get("start", {})
+    end = item.get("end", {})
+    all_day = "date" in start
+
+    return CalendarEvent(
+        id=item["id"],
+        title=item.get("summary", "(No title)"),
+        start=start.get("date") or start.get("dateTime", ""),
+        end=end.get("date") or end.get("dateTime", ""),
+        all_day=all_day,
+        location=item.get("location"),
+    )
+
+
+@router.delete("/events/{event_id}", status_code=204)
+async def delete_event(event_id: str):
+    """Delete a calendar event."""
+    access_token = await _get_access_token()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.delete(
+            f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code not in (200, 204):
+        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+
