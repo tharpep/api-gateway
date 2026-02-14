@@ -20,10 +20,12 @@ CALENDAR_SCOPES = [
 
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
 ]
 
 TASKS_SCOPES = [
-    "https://www.googleapis.com/auth/tasks.readonly",
+    "https://www.googleapis.com/auth/tasks",
 ]
 
 ALL_SCOPES = CALENDAR_SCOPES + GMAIL_SCOPES + TASKS_SCOPES
