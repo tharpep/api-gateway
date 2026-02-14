@@ -1,6 +1,7 @@
 """Email endpoint - Gmail integration."""
 
-from datetime import datetime, timedelta
+import base64
+from email.mime.text import MIMEText
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -29,6 +30,48 @@ async def _get_access_token() -> str:
     return _cached_token.access_token
 
 
+def _decode_body(payload: dict) -> str:
+    """Recursively extract plain text body from a Gmail message payload."""
+    mime_type = payload.get("mimeType", "")
+
+    if mime_type == "text/plain":
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+
+    if mime_type.startswith("multipart/"):
+        for part in payload.get("parts", []):
+            result = _decode_body(part)
+            if result:
+                return result
+
+    return ""
+
+
+def _build_raw_message(
+    to: str,
+    subject: str,
+    body: str,
+    cc: str | None = None,
+    in_reply_to: str | None = None,
+    references: str | None = None,
+) -> str:
+    """Build a base64url encoded raw MIME message for the Gmail API."""
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["to"] = to
+    msg["subject"] = subject
+    if cc:
+        msg["cc"] = cc
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    if references:
+        msg["References"] = references
+
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+
+
+# --- Models ---
+
 class EmailMessage(BaseModel):
     id: str
     subject: str
@@ -37,21 +80,31 @@ class EmailMessage(BaseModel):
     date: str
 
 
+class EmailMessageDetail(EmailMessage):
+    thread_id: str
+    recipient: str
+    body: str
+
+
 class EmailResponse(BaseModel):
     messages: list[EmailMessage]
     count: int
 
 
-async def _fetch_messages(hours: int = 24, max_results: int = 50) -> list[EmailMessage]:
-    """Fetch messages from Gmail API."""
+class DraftRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    cc: str | None = None
+
+
+# --- Internal helpers ---
+
+async def _fetch_messages(query: str, max_results: int = 50) -> list[EmailMessage]:
+    """Fetch messages matching a Gmail query, returning metadata summaries."""
     access_token = await _get_access_token()
 
-    query = f"category:primary newer_than:{hours}h"
-
-    params = {
-        "q": query,
-        "maxResults": max_results,
-    }
+    params = {"q": query, "maxResults": max_results}
 
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -92,55 +145,83 @@ async def _fetch_messages(hours: int = 24, max_results: int = 50) -> list[EmailM
 
             if msg_response.status_code == 200:
                 msg_data = msg_response.json()
-                headers = {h["name"]: h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
-
-                messages.append(
-                    EmailMessage(
-                        id=msg_data["id"],
-                        subject=headers.get("Subject", "(No subject)"),
-                        sender=headers.get("From", "(Unknown sender)"),
-                        snippet=msg_data.get("snippet", ""),
-                        date=headers.get("Date", ""),
-                    )
-                )
+                hdrs = {h["name"]: h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
+                messages.append(EmailMessage(
+                    id=msg_data["id"],
+                    subject=hdrs.get("Subject", "(No subject)"),
+                    sender=hdrs.get("From", "(Unknown sender)"),
+                    snippet=msg_data.get("snippet", ""),
+                    date=hdrs.get("Date", ""),
+                ))
 
     return messages
 
 
+# --- Routes ---
+
 @router.get("/recent", response_model=EmailResponse)
 async def get_recent(hours: int = Query(default=24, ge=1, le=168)):
-    """Get recent email messages from primary inbox.
-
-    Args:
-        hours: Number of hours to look back (default: 24, max: 168/1 week)
-    """
-    messages = await _fetch_messages(hours=hours)
+    """Get recent messages from primary inbox."""
+    messages = await _fetch_messages(f"category:primary newer_than:{hours}h")
     return EmailResponse(messages=messages, count=len(messages))
 
 
-@router.get("/unread")
-async def get_unread():
-    """Get unread email count and summaries."""
-    # TODO: Implement unread retrieval
-    return {"status": "not implemented"}
+@router.get("/unread", response_model=EmailResponse)
+async def get_unread(max_results: int = Query(default=20, ge=1, le=50)):
+    """Get unread messages from primary inbox."""
+    messages = await _fetch_messages("is:unread category:primary", max_results=max_results)
+    return EmailResponse(messages=messages, count=len(messages))
 
 
-@router.get("/messages")
-async def get_messages():
-    """Get recent messages."""
-    # TODO: Implement message retrieval
-    return {"status": "not implemented"}
-
-
-@router.get("/messages/{message_id}")
+@router.get("/messages/{message_id}", response_model=EmailMessageDetail)
 async def get_message(message_id: str):
-    """Get a specific message."""
-    # TODO: Implement single message retrieval
-    return {"status": "not implemented"}
+    """Get a specific message with full decoded body."""
+    access_token = await _get_access_token()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{GMAIL_API}/users/me/messages/{message_id}",
+            params={"format": "full"},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code == 404:
+        raise HTTPException(404, "Message not found")
+    if response.status_code != 200:
+        raise HTTPException(502, f"Gmail API error: {response.text}")
+
+    msg_data = response.json()
+    hdrs = {h["name"]: h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
+    body = _decode_body(msg_data.get("payload", {})) or msg_data.get("snippet", "")
+
+    return EmailMessageDetail(
+        id=msg_data["id"],
+        thread_id=msg_data.get("threadId", ""),
+        subject=hdrs.get("Subject", "(No subject)"),
+        sender=hdrs.get("From", "(Unknown sender)"),
+        recipient=hdrs.get("To", ""),
+        snippet=msg_data.get("snippet", ""),
+        date=hdrs.get("Date", ""),
+        body=body,
+    )
 
 
-@router.post("/send")
-async def send_email():
-    """Send an email."""
-    # TODO: Implement email sending
-    return {"status": "not implemented"}
+@router.post("/draft", status_code=201)
+async def create_draft(body: DraftRequest):
+    """Save an email as a draft."""
+    access_token = await _get_access_token()
+
+    raw = _build_raw_message(body.to, body.subject, body.body, body.cc)
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{GMAIL_API}/users/me/drafts",
+            json={"message": {"raw": raw}},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code not in (200, 201):
+        raise HTTPException(502, f"Gmail API error: {response.text}")
+
+    data = response.json()
+    return {"id": data.get("id"), "message_id": data.get("message", {}).get("id")}
