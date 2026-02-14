@@ -194,22 +194,97 @@ async def get_tasks(list_id: str):
     return {"tasks": tasks, "count": len(tasks)}
 
 
-@router.post("/lists/{list_id}/tasks")
-async def create_task(list_id: str):
-    """Create a new task."""
-    # TODO: Implement task creation
-    return {"status": "not implemented"}
+class CreateTaskRequest(BaseModel):
+    title: str
+    notes: str | None = None
+    due: str | None = None     # RFC 3339 timestamp, e.g. "2026-02-20T00:00:00.000Z"
 
 
-@router.patch("/lists/{list_id}/tasks/{task_id}")
-async def update_task(list_id: str, task_id: str):
-    """Update a task (mark complete, edit, etc)."""
-    # TODO: Implement task update
-    return {"status": "not implemented"}
+class UpdateTaskRequest(BaseModel):
+    title: str | None = None
+    notes: str | None = None
+    due: str | None = None
+    status: str | None = None  # "needsAction" or "completed"
 
 
-@router.delete("/lists/{list_id}/tasks/{task_id}")
+@router.post("/lists/{list_id}/tasks", response_model=Task, status_code=201)
+async def create_task(list_id: str, body: CreateTaskRequest):
+    """Create a new task in a list."""
+    access_token = await _get_access_token()
+
+    payload: dict = {"title": body.title}
+    if body.notes:
+        payload["notes"] = body.notes
+    if body.due:
+        payload["due"] = body.due
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks",
+            json=payload,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code not in (200, 201):
+        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+
+    item = response.json()
+    return Task(
+        id=item["id"],
+        title=item.get("title", "(No title)"),
+        status=item.get("status", "needsAction"),
+        due=item.get("due"),
+        notes=item.get("notes"),
+        list_name=list_id,
+    )
+
+
+@router.patch("/lists/{list_id}/tasks/{task_id}", response_model=Task)
+async def update_task(list_id: str, task_id: str, body: UpdateTaskRequest):
+    """Update a task (title, notes, due date, or mark complete)."""
+    access_token = await _get_access_token()
+
+    payload: dict = {}
+    if body.title is not None:
+        payload["title"] = body.title
+    if body.notes is not None:
+        payload["notes"] = body.notes
+    if body.due is not None:
+        payload["due"] = body.due
+    if body.status is not None:
+        payload["status"] = body.status
+
+    async with httpx.AsyncClient() as client:
+        response = await client.patch(
+            f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks/{task_id}",
+            json=payload,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+
+    item = response.json()
+    return Task(
+        id=item["id"],
+        title=item.get("title", "(No title)"),
+        status=item.get("status", "needsAction"),
+        due=item.get("due"),
+        notes=item.get("notes"),
+        list_name=list_id,
+    )
+
+
+@router.delete("/lists/{list_id}/tasks/{task_id}", status_code=204)
 async def delete_task(list_id: str, task_id: str):
     """Delete a task."""
-    # TODO: Implement task deletion
-    return {"status": "not implemented"}
+    access_token = await _get_access_token()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.delete(
+            f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks/{task_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code not in (200, 204):
+        raise HTTPException(502, f"Google Tasks API error: {response.text}")
