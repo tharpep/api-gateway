@@ -27,7 +27,11 @@ TASKS_SCOPES = [
     "https://www.googleapis.com/auth/tasks",
 ]
 
-ALL_SCOPES = CALENDAR_SCOPES + GMAIL_SCOPES + TASKS_SCOPES
+DRIVE_SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
+]
+
+ALL_SCOPES = CALENDAR_SCOPES + GMAIL_SCOPES + TASKS_SCOPES + DRIVE_SCOPES
 
 
 class TokenData(BaseModel):
