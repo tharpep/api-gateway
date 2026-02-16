@@ -67,8 +67,10 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
   - `GET /email/recent`, `GET /email/unread`, `GET /email/search`, `GET /email/messages/{id}`
   - `POST /email/draft`
   - **Missing:** `POST /email/send`, `POST /email/reply/{id}`
-- `storage.py` — Google Drive (`Knowledge Base → General` folder):
-  - `GET /storage/files`, `GET /storage/files/{file_id}/content`
+- `storage.py` — Google Drive KB subfolders (General, Projects, Purdue, Career, Reference):
+  - `GET /storage/files` — list files; optional `?category=` filter, each file includes `category` field
+  - `GET /storage/files/{file_id}/content` — download file content
+  - Folder IDs are cached in-memory. Missing subfolders are skipped with a warning.
 
 **Stub / not yet implemented:**
 - `context.py` — aggregated context snapshot
