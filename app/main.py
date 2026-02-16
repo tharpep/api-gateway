@@ -8,7 +8,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.dependencies import verify_api_key
-from app.routers import ai, calendar, context, email, health, notify, storage, tasks, webhooks
+from app.routers import ai, calendar, context, email, health, kb, notify, storage, tasks, webhooks
 
 app = FastAPI(
     title="API Gateway",
@@ -46,6 +46,9 @@ app.include_router(
 )
 app.include_router(
     storage.router, prefix="/storage", tags=["storage"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    kb.router, prefix="/kb", tags=["kb"], dependencies=[Depends(verify_api_key)]
 )
 app.include_router(
     context.router, prefix="/context", tags=["context"], dependencies=[Depends(verify_api_key)]

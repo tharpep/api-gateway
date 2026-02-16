@@ -27,5 +27,9 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     default_ai_model: str = "claude-haiku-4-5-20251001"
 
+    # KB service (MY-AI)
+    kb_service_url: str = ""
+    kb_service_key: str = ""  # X-API-Key for KB service, if auth is enabled
+
 
 settings = Settings()
