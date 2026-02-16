@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 DRIVE_API = "https://www.googleapis.com/drive/v3"
 _KB_ROOT = "Knowledge Base"
 _FOLDER_MIME = "application/vnd.google-apps.folder"
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _EXPORT_MIMES = {
     "application/vnd.google-apps.document": "text/plain",
-    "application/vnd.google-apps.spreadsheet": "text/csv",
+    "application/vnd.google-apps.spreadsheet": _XLSX_MIME,
     "application/vnd.google-apps.presentation": "text/plain",
 }
 
