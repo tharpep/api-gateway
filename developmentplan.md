@@ -21,7 +21,7 @@
 │   │                                                         │     │
 │   │  Integrations:                                          │     │
 │   │    /calendar   — Google Calendar (CRUD)                 │     │
-│   │    /email      — Gmail (read, send, reply, draft)       │     │
+│   │    /email      — Gmail (read, draft)                    │     │
 │   │    /tasks      — Google Tasks (CRUD)                    │     │
 │   │    /notify     — Pushover                               │     │
 │   │    /storage    — Google Drive                           │     │
@@ -216,8 +216,6 @@ structure all exist — this is adding POST/PATCH/DELETE handlers.
 - `DELETE /calendar/events/{id}`    — cancel event
 
 **Email:**
-- `POST   /email/send`              — send email
-- `POST   /email/reply/{id}`        — reply to thread
 - `POST   /email/draft`             — save draft
 
 **Tasks:**
@@ -227,7 +225,7 @@ structure all exist — this is adding POST/PATCH/DELETE handlers.
 
 **Deliverables:**
 - [ ] Calendar write endpoints + tests
-- [ ] Email send/reply/draft endpoints + tests
+- [ ] Email draft endpoint + tests
 - [ ] Task CRUD endpoints + tests
 - [ ] Updated GatewayClient in automations
 
@@ -334,6 +332,28 @@ Stages toggleable, swappable, configurable independently.
 - `GET   /kb/stats`      — chunk count, category breakdown, last sync times
 - `GET   /v1/chat/completions` — OpenAI-compatible proxy with RAG injection
 
+**`/kb/search` supports category filtering:**
+
+```json
+{
+  "query": "...",
+  "categories": ["projects", "conversations"],  // optional, omit to search all
+  "top_k": 10,
+  "pipeline": "search"
+}
+```
+
+Categories are derived from source: Drive folder names (`school`, `work`,
+`personal`, `medical`, `projects`, `reference`), `conversations` (agent
+session summaries), `code` (future git repos). Agent uses category filters
+to scope retrieval to relevant knowledge sources.
+
+**`/kb/ingest` accepts external documents (not just Drive sync):**
+
+The agent POSTs conversation summaries here after session processing.
+Requires `source_category` and `metadata` in the request body so the
+chunk is properly tagged and filterable.
+
 ### 2E. Gateway KB Proxy
 
 Add `/kb/*` routes to api-gateway that proxy to MY-AI:
@@ -389,39 +409,245 @@ Response to user
 - Manually defined tool schemas matching gateway endpoints
 - Each tool = name, description, JSON schema, HTTP method + endpoint
 - All tools hit one base URL (gateway) with one API key
-- Tools include: calendar CRUD, email read/send/reply, tasks CRUD,
+- Tools include: calendar CRUD, email read/draft, tasks CRUD,
   notifications, context snapshot, KB search
 
-### 3C. Conversation Management
+### 3C. Session Storage
 
-- In-memory conversation history (start simple)
-- Persist to Postgres later (same Cloud SQL instance)
-- Context window management (truncation, summarization)
-- System prompt with persona, available tools, user context
+All conversation messages persisted in Postgres (same Cloud SQL instance).
+Sessions are the unit of conversation — each has a lifecycle from creation
+through processing.
 
-### 3D. Model Routing
+```sql
+CREATE TABLE sessions (
+    id            UUID PRIMARY KEY,
+    name          TEXT,                    -- auto-generated or user-provided
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    last_activity TIMESTAMPTZ DEFAULT NOW(),
+    message_count INT DEFAULT 0,
+    processed_at  TIMESTAMPTZ,             -- null = not yet processed
+    summary_kb_id UUID                     -- references KB chunk if summary ingested
+);
 
-- Haiku: simple tool selection, quick factual responses
+CREATE TABLE messages (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL,              -- user, assistant, system, tool
+    content    TEXT NOT NULL,
+    timestamp  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX ON messages (session_id, timestamp);
+```
+
+Every message saved as it happens (append-only). This is for session
+resumption and frontend display — not for RAG retrieval.
+
+Context window management: when conversation history exceeds the model's
+window, truncate oldest messages or summarize earlier portions. Start with
+simple truncation, add rolling summarization later.
+
+### 3D. Structured Memory (Persistent Facts)
+
+Agent-owned Postgres table storing personal facts, preferences, and context
+that persist across sessions. Injected into the system prompt — no RAG,
+no embeddings, just direct SQL reads.
+
+```sql
+CREATE TABLE agent_memory (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    fact_type   TEXT NOT NULL,        -- 'preference', 'personal', 'project',
+                                      --  'instruction', 'relationship'
+    key         TEXT NOT NULL,        -- 'programming_language', 'employer'
+    value       TEXT NOT NULL,        -- 'Python', 'Anthropic'
+    source      TEXT,                 -- session_id, 'user_explicit', 'onboarding'
+    confidence  FLOAT DEFAULT 1.0,   -- 1.0 = user stated, 0.7 = inferred
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(fact_type, key)
+);
+```
+
+**How facts are loaded:**
+
+On conversation start, agent queries `agent_memory` and formats into system
+prompt section. Start by injecting the 50 most recently updated facts. If
+the table grows large, add a `recall_facts` tool the agent calls on demand
+with `fact_type` filters instead of pre-loading everything.
+
+```
+## Known facts about the user
+
+**Personal**
+- name: Pryce
+- school: Purdue CE senior
+
+**Preference**
+- response_style: Direct, concise, no preamble
+- primary_language: Python
+
+**Project**
+- jarvis_status: Phase 1 - gateway write ops
+```
+
+**How facts are written — two mechanisms:**
+
+1. **Post-session batch extraction.** When a session is processed (see 3E),
+   Haiku extracts facts from the conversation. Upserts to `agent_memory`
+   only if confidence >= existing fact's confidence.
+
+2. **Explicit user commands (real-time).** User says "remember that I
+   switched to Voyage AI" → agent calls a `memory_update` tool immediately,
+   upserts with `confidence = 1.0` and `source = 'user_explicit'`.
+
+### 3E. Session Processing Pipeline
+
+Sessions are **not** processed on every message. Processing triggers when
+a session ends (inactivity timeout, explicit close, or session switch).
+Can also run on a cron (nightly batch) as a fallback.
+
+```
+Session ends (inactivity timeout / explicit close / session switch)
+    │
+    ▼
+Session eligible? (processed_at IS NULL, message_count > 0)
+    │
+    ▼
+Two parallel Haiku calls:
+    │
+    ├─► Memory extraction
+    │   Prompt: "Extract new/updated personal facts from this conversation."
+    │   Input: session messages + existing agent_memory facts (for dedup)
+    │   Output: JSON array of {fact_type, key, value, confidence}
+    │   Action: Upsert to agent_memory table
+    │
+    └─► Session summarization
+        Prompt: "Summarize key topics, decisions, outcomes, action items."
+        Input: session messages
+        Output: condensed summary (1-3 paragraphs)
+        Action: POST to gateway /kb/ingest with:
+          - source_category: 'conversations'
+          - metadata: {session_id, date, topic_tags}
+    │
+    ▼
+Mark session: processed_at = NOW(), summary_kb_id = <returned chunk ID>
+Raw messages remain in Postgres (for frontend display).
+```
+
+**Why not process every message:** Cost (two Haiku calls per session vs per
+message), quality (more context = better extraction), and noise reduction
+(single facts get extracted once, not re-extracted on every turn).
+
+**Retention policy:** Start by keeping all raw messages. They're small in
+Postgres at personal scale (~100MB/year of daily use). Add a retention
+policy later if needed (e.g., drop raw messages after 90 days — summaries
+and extracted facts survive).
+
+### 3F. Category-Filtered KB Search
+
+The agent passes category filters when calling `/kb/search` to retrieve
+only relevant knowledge sources. This prevents retrieval noise as the
+corpus grows.
+
+Categories derive from source:
+- Google Drive folders → `school`, `work`, `personal`, `medical`,
+  `projects`, `reference`
+- Conversation summaries → `conversations`
+- Git repos (future) → `code`
+
+The agent decides which categories to search based on intent analysis
+(part of the LLM reasoning — it picks tool parameters). Omitting the
+filter searches everything.
+
+```json
+POST /kb/search
+{
+  "query": "deployment pipeline for Jarvis",
+  "categories": ["projects", "code"],
+  "top_k": 10
+}
+```
+
+Implemented as a WHERE clause in pgvector query:
+```sql
+WHERE ($1::text[] IS NULL OR source_category = ANY($1))
+```
+
+### 3G. Model Routing
+
+- Haiku: simple tool selection, quick factual responses, memory extraction,
+  session summarization (batch processing)
 - Sonnet: complex planning, multi-step reasoning, synthesis
 - Decision heuristic: message complexity, tools needed, conversation depth
 
-### 3E. API Surface
+### 3H. API Surface
 
 - `POST /chat`                     — send message, get response
 - `GET  /conversations`            — list conversations
 - `GET  /conversations/{id}`       — get conversation history
+- `GET  /memory`                   — list stored facts
+- `PUT  /memory`                   — manually add/update a fact
+- `DELETE /memory/{id}`            — delete a fact
+- `POST /conversations/{id}/process` — manually trigger session processing
 - `WS   /chat/stream`             — streaming (nice-to-have)
 
-### 3F. Deliverables
+### 3I. Memory Architecture Summary
+
+```
+User sends message
+    │
+    ▼
+Agent loads:
+    1. Structured facts (agent_memory → system prompt)     ← direct SQL
+    2. Conversation history (messages → messages array)     ← direct SQL
+    │
+    ▼
+Agent optionally calls /kb/search (with category filters)
+    → Searches docs, conversation summaries, code
+    │
+    ▼
+LLM responds (facts in system prompt + KB results as context)
+    │
+    ▼
+Messages saved to Postgres (append-only, every message)
+    │
+    ▼
+Session ends
+    │
+    ▼
+Batch processing:
+    ├─► Haiku extracts facts → upsert agent_memory
+    └─► Haiku summarizes session → POST /kb/ingest (category: 'conversations')
+    │
+    ▼
+Session marked processed. Raw messages retained.
+```
+
+| Layer | Storage | Location | Access Method |
+|-------|---------|----------|---------------|
+| Structured facts | Postgres table | Agent DB | Direct SQL → system prompt |
+| Session messages | Postgres table | Agent DB | Direct SQL → frontend display |
+| Conversation summaries | pgvector chunks | MY-AI KB | `/kb/search` with `category = 'conversations'` |
+| Documents | pgvector chunks | MY-AI KB | `/kb/search` with category filters |
+
+### 3J. Deliverables
 
 - [ ] Agent loop with Anthropic tool_use
 - [ ] Tool registry mapping to gateway endpoints
-- [ ] Conversation history (in-memory, then Postgres)
+- [ ] Session storage in Postgres (sessions + messages tables)
+- [ ] Structured memory system (agent_memory table)
+- [ ] Memory injection into system prompt on conversation start
+- [ ] `memory_update` tool for explicit user commands
+- [ ] Session processing pipeline (fact extraction + summarization)
+- [ ] Conversation summaries ingested to KB via gateway `/kb/ingest`
+- [ ] Category-filtered KB search support
 - [ ] Model routing (Haiku/Sonnet)
-- [ ] REST API (/chat)
+- [ ] REST API (/chat, /conversations, /memory)
 - [ ] Deployed to Cloud Run
 - [ ] End-to-end: "What's on my calendar?" → correct answer via tool call
 - [ ] End-to-end: "Find my notes about X" → KB search → cited answer
+- [ ] End-to-end: "Remember that I prefer Python" → fact stored, used in future sessions
+- [ ] End-to-end: Session ends → summary appears in KB, facts extracted
 
 ---
 
