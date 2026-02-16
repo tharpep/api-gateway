@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Personal API gateway built with **FastAPI** (Python 3.11+) that provides a unified interface for multiple external services: notifications (Pushover), Google Calendar, AI/LLM providers (Anthropic, OpenRouter), with stubs for tasks, email, storage, context aggregation, and webhooks.
+Personal API gateway built with **FastAPI** (Python 3.11+) that provides a unified interface for multiple external services. Part of a larger personal AI ecosystem — see `developmentplan.md` for the full architecture.
 
 Managed with **Poetry**. Deployed via **Docker** to **GCP Cloud Run** through GitHub Actions CI/CD.
 
@@ -46,11 +46,36 @@ Two implementations:
 
 ### Google OAuth (`app/auth/google.py`)
 
-Stateless OAuth helper with token refresh. Routers that use Google APIs (calendar, etc.) cache the access token in-memory and refresh on 401 responses. Initial refresh token obtained via `get_google_token.py` utility script.
+Stateless OAuth helper with token refresh. Routers that use Google APIs cache the access token in-memory and refresh on 401 responses. Initial refresh token obtained via `get_google_token.py` utility script.
 
 ### Routers (`app/routers/`)
 
-Each router is a FastAPI `APIRouter` for a service domain. Implemented: `health`, `notify`, `ai`, `calendar`. Stubs: `tasks`, `email`, `storage`, `context`, `webhooks`.
+Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except `health`.
+
+**Fully implemented:**
+
+- `health.py` — `GET /health` (public)
+- `notify.py` — `POST /notify` via Pushover
+- `ai.py` — OpenAI-compatible LLM proxy (`/ai/v1/chat/completions`, `/ai/v1/chat/completions/stream`, `/ai/v1/models`)
+- `calendar.py` — Google Calendar full CRUD:
+  - `GET /calendar/today`, `GET /calendar/events`, `GET /calendar/availability`
+  - `POST /calendar/events`, `PATCH /calendar/events/{id}`, `DELETE /calendar/events/{id}`
+- `tasks.py` — Google Tasks full CRUD:
+  - `GET /tasks/upcoming`, `GET /tasks/lists`, `GET /tasks/lists/{list_id}/tasks`
+  - `POST /tasks/lists/{list_id}/tasks`, `PATCH /tasks/lists/{list_id}/tasks/{task_id}`, `DELETE /tasks/lists/{list_id}/tasks/{task_id}`
+- `email.py` — Gmail read + draft:
+  - `GET /email/recent`, `GET /email/unread`, `GET /email/search`, `GET /email/messages/{id}`
+  - `POST /email/draft`
+  - **Missing:** `POST /email/send`, `POST /email/reply/{id}`
+- `storage.py` — Google Drive (`Knowledge Base → General` folder):
+  - `GET /storage/files`, `GET /storage/files/{file_id}/content`
+
+**Stub / not yet implemented:**
+- `context.py` — aggregated context snapshot
+- `webhooks.py` — incoming webhook handling
+
+**Planned but not yet added:**
+- `/kb/*` — proxy routes to the knowledge-base service (Phase 2E in `developmentplan.md`)
 
 ## Key Conventions
 
@@ -59,3 +84,4 @@ Each router is a FastAPI `APIRouter` for a service domain. Implemented: `health`
 - Streaming AI responses use **Server-Sent Events** (SSE) format
 - CORS allows `localhost:3000` and `localhost:3001` by default (configurable in settings)
 - Docker uses `PORT` env var (Cloud Run sets 8080), falls back to 8000
+- Google API routers all follow the same pattern: module-level `_cached_token` + `_oauth` singleton, `_get_access_token()` helper that refreshes on expiry, auto-retry once on 401
