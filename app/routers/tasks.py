@@ -90,12 +90,12 @@ async def _fetch_task_lists() -> list[TaskList]:
     return task_lists
 
 
-async def _fetch_tasks_from_list(list_id: str, list_name: str) -> list[Task]:
+async def _fetch_tasks_from_list(list_id: str, list_name: str, include_completed: bool = False) -> list[Task]:
     """Fetch tasks from a specific list."""
     access_token = await _get_access_token()
 
     params = {
-        "showCompleted": "false",
+        "showCompleted": "true" if include_completed else "false",
         "showHidden": "false",
     }
 
@@ -188,9 +188,9 @@ async def get_task_lists():
 
 
 @router.get("/lists/{list_id}/tasks")
-async def get_tasks(list_id: str):
-    """Get tasks from a specific list."""
-    tasks = await _fetch_tasks_from_list(list_id, "Unknown")
+async def get_tasks(list_id: str, include_completed: bool = Query(default=False)):
+    """Get tasks from a specific list. Excludes completed tasks by default."""
+    tasks = await _fetch_tasks_from_list(list_id, "Unknown", include_completed=include_completed)
     return {"tasks": tasks, "count": len(tasks)}
 
 

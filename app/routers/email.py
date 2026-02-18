@@ -159,6 +159,22 @@ async def _fetch_messages(query: str, max_results: int = 50) -> list[EmailMessag
 
 # --- Routes ---
 
+@router.get("", response_model=EmailResponse)
+async def list_emails(
+    unread_only: bool = Query(default=False),
+    hours: int | None = Query(default=None, ge=1, le=168),
+    max_results: int = Query(default=20, ge=1, le=50),
+):
+    """List emails from the primary inbox. Filter by unread status and/or recency."""
+    query_parts = ["category:primary"]
+    if unread_only:
+        query_parts.append("is:unread")
+    if hours is not None:
+        query_parts.append(f"newer_than:{hours}h")
+    messages = await _fetch_messages(" ".join(query_parts), max_results=max_results)
+    return EmailResponse(messages=messages, count=len(messages))
+
+
 @router.get("/recent", response_model=EmailResponse)
 async def get_recent(hours: int = Query(default=24, ge=1, le=168)):
     """Get recent messages from primary inbox."""
