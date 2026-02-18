@@ -2,9 +2,20 @@
 #
 # Prerequisites:
 # - GitHub repo secrets: GCP_PROJECT_ID, GCP_SA_KEY (JSON key for a service account with
-#   roles/run.admin, roles/artifactregistry.writer, roles/iam.serviceAccountUser)
-# - Artifact Registry repo and GCP one-time setup (see README). Configure env/secrets for
-#   Cloud Run manually in the console or via gcloud.
+#   roles/run.admin, roles/artifactregistry.writer, roles/iam.serviceAccountUser,
+#   roles/secretmanager.secretAccessor)
+# - Artifact Registry repo and GCP one-time setup (see README).
+# - Secret Manager secrets (lowercase with hyphens); env var → secret name:
+#     API_KEY, KB_SERVICE_KEY → api-key
+#     PUSHOVER_USER_KEY → pushover-user-key
+#     PUSHOVER_API_TOKEN → pushover-api-token
+#     GOOGLE_CLIENT_ID → google-client-id
+#     GOOGLE_CLIENT_SECRET → google-client-secret
+#     GOOGLE_REDIRECT_URI → google-redirect-uri
+#     GOOGLE_REFRESH_TOKEN → google-refresh-token
+#     ANTHROPIC_API_KEY → anthropic-api-key
+#     OPENROUTER_API_KEY → openrouter-api-key
+#   Set KB_SERVICE_URL in Cloud Run console or via --set-env-vars (non-secret URL).
 
 name: Deploy to GCP Cloud Run
 
@@ -46,4 +57,5 @@ jobs:
             --image=${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }} \
             --region=${{ env.REGION }} \
             --platform=managed \
-            --allow-unauthenticated
+            --allow-unauthenticated \
+            --set-secrets=API_KEY=api-key:latest,KB_SERVICE_KEY=api-key:latest,PUSHOVER_USER_KEY=pushover-user-key:latest,PUSHOVER_API_TOKEN=pushover-api-token:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,GOOGLE_REDIRECT_URI=google-redirect-uri:latest,GOOGLE_REFRESH_TOKEN=google-refresh-token:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,OPENROUTER_API_KEY=openrouter-api-key:latest
