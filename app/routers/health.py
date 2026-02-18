@@ -49,6 +49,7 @@ ENDPOINTS = [
     EndpointInfo(path="/tasks", description="Task management", provider="Google Tasks"),
     EndpointInfo(path="/email", description="Email access", provider="Gmail"),
     EndpointInfo(path="/storage", description="File and photo storage", provider="Google Drive"),
+    EndpointInfo(path="/kb", description="Knowledge base search and sync", provider="KB service"),
     EndpointInfo(path="/context", description="Aggregated context snapshot"),
     EndpointInfo(path="/webhooks", description="Webhook ingestion and normalization"),
 ]
