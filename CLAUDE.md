@@ -71,13 +71,18 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
   - `GET /storage/files` — list files; optional `?category=` filter, each file includes `category` field
   - `GET /storage/files/{file_id}/content` — download file content
   - Folder IDs are cached in-memory. Missing subfolders are skipped with a warning.
+- `kb.py` — proxy to the knowledge-base service (requires `KB_SERVICE_URL`; optional `KB_SERVICE_KEY`):
+  - `POST /kb/search` — hybrid KB search
+  - `POST /kb/sync` — trigger Drive → KB sync (optional `force=true`)
+  - `GET /kb/sources` — list tracked KB source files
+  - `GET /kb/files` — list indexed files with chunk counts
+  - `GET /kb/stats` — chunk and file counts
+  - `DELETE /kb/files/{drive_file_id}` — remove a file from the index
+  - `DELETE /kb` — clear entire KB index
 
 **Stub / not yet implemented:**
-- `context.py` — aggregated context snapshot
-- `webhooks.py` — incoming webhook handling
-
-**Planned but not yet added:**
-- `/kb/*` — proxy routes to the knowledge-base service (Phase 2E in `developmentplan.md`)
+- `context.py` — `GET /context/now` returns placeholder; aggregated context snapshot not built yet
+- `webhooks.py` — `POST /webhooks/ingest` accepts payloads but source-specific handling not implemented
 
 ## Key Conventions
 
