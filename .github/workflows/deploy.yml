@@ -58,4 +58,4 @@ jobs:
             --region=${{ env.REGION }} \
             --platform=managed \
             --allow-unauthenticated \
-            --set-secrets=API_KEY=api-key:latest,KB_SERVICE_KEY=api-key:latest,PUSHOVER_USER_KEY=pushover-user-key:latest,PUSHOVER_API_TOKEN=pushover-api-token:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,GOOGLE_REDIRECT_URI=google-redirect-uri:latest,GOOGLE_REFRESH_TOKEN=google-refresh-token:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest
+            --set-secrets=API_KEY=api-key:latest,KB_SERVICE_KEY=api-key:latest,PUSHOVER_USER_KEY=pushover-user-key:latest,PUSHOVER_API_TOKEN=pushover-secret-key:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,GOOGLE_REDIRECT_URI=google-redirect-uri:latest,GOOGLE_REFRESH_TOKEN=google-refresh-token:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest
