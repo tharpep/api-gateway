@@ -31,5 +31,8 @@ class Settings(BaseSettings):
     kb_service_url: str = ""
     kb_service_key: str = ""  # X-API-Key for KB service, if auth is enabled
 
+    # Tavily (web search)
+    tavily_api_key: str = ""
+
 
 settings = Settings()
