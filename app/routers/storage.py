@@ -1,6 +1,8 @@
-"""Storage endpoint — Google Drive Knowledge Base folders."""
+"""Storage endpoint — Google Drive files."""
 
+import json
 import logging
+import uuid
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -16,12 +18,18 @@ logger = logging.getLogger(__name__)
 DRIVE_API = "https://www.googleapis.com/drive/v3"
 _KB_ROOT = "Knowledge Base"
 _FOLDER_MIME = "application/vnd.google-apps.folder"
-_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _EXPORT_MIMES = {
     "application/vnd.google-apps.document": "text/plain",
-    "application/vnd.google-apps.spreadsheet": _XLSX_MIME,
+    "application/vnd.google-apps.spreadsheet": "text/csv",
     "application/vnd.google-apps.presentation": "text/plain",
 }
+
+
+def _is_readable(mime: str) -> bool:
+    """Return True if this file can be exported/read as text."""
+    if mime in _EXPORT_MIMES:
+        return True
+    return mime.startswith("text/") or mime in {"application/json", "application/xml"}
 
 # Known KB subfolders: lowercase category key → Drive folder name
 _KB_SUBFOLDERS: dict[str, str] = {
@@ -124,13 +132,38 @@ async def _list_files_in_folder(
     ]
 
 
+async def _list_files_general(
+    client: httpx.AsyncClient,
+    folder_id: str | None,
+    query: str | None,
+    max_results: int,
+) -> list[dict]:
+    """List Drive files using arbitrary folder/query filters."""
+    q_parts = ["trashed = false", f"mimeType != '{_FOLDER_MIME}'"]
+    if folder_id:
+        q_parts.append(f"'{folder_id}' in parents")
+    if query:
+        q_parts.append(f"({query})")
+    data = await _api_get(
+        client,
+        "files",
+        {
+            "q": " and ".join(q_parts),
+            "fields": "files(id, name, mimeType, modifiedTime, size)",
+            "pageSize": max_results,
+            "orderBy": "modifiedTime desc",
+        },
+    )
+    return data.get("files", [])
+
+
 class DriveFile(BaseModel):
     id: str
     name: str
     mime_type: str
     modified_time: str
     size: int | None = None
-    category: str
+    category: str = ""
 
 
 class DriveFilesResponse(BaseModel):
@@ -149,12 +182,34 @@ async def list_kb_files(
         default=None,
         description="ISO 8601 timestamp — return only files modified after this time",
     ),
+    folder_id: str | None = Query(
+        default=None,
+        description="Scope to a specific Drive folder ID. Activates general Drive search mode.",
+    ),
+    query: str | None = Query(
+        default=None,
+        description="Drive search query, e.g. 'name contains \"resume\"'.",
+    ),
+    max_results: int = Query(default=20, ge=1, le=50),
 ):
-    """List files in Knowledge Base subfolders.
+    """List Drive files. Use folder_id/query for general search, or category for KB subfolders."""
+    # General Drive search mode
+    if folder_id is not None or query is not None:
+        async with httpx.AsyncClient() as client:
+            raw = await _list_files_general(client, folder_id, query, max_results)
+        files = [
+            DriveFile(
+                id=f["id"],
+                name=f["name"],
+                mime_type=f["mimeType"],
+                modified_time=f["modifiedTime"],
+                size=int(f["size"]) if f.get("size") else None,
+            )
+            for f in raw
+        ]
+        return DriveFilesResponse(files=files, count=len(files))
 
-    Specify ?category=projects to list one subfolder, or omit to get all files
-    across all subfolders. Each file includes its category (subfolder name).
-    """
+    # KB subfolder mode
     if category is not None:
         category = category.lower()
         if category not in _KB_SUBFOLDERS:
@@ -167,16 +222,14 @@ async def list_kb_files(
 
     async with httpx.AsyncClient() as client:
         if category:
-            # Single subfolder
-            folder_id = await _kb_subfolder_id(client, _KB_SUBFOLDERS[category])
-            raw_files = await _list_files_in_folder(client, folder_id, category, modified_after)
+            kb_folder_id = await _kb_subfolder_id(client, _KB_SUBFOLDERS[category])
+            raw_files = await _list_files_in_folder(client, kb_folder_id, category, modified_after)
         else:
-            # All subfolders — skip any that don't exist in Drive
             for cat_key, folder_name in _KB_SUBFOLDERS.items():
                 try:
-                    folder_id = await _kb_subfolder_id(client, folder_name)
-                    files = await _list_files_in_folder(client, folder_id, cat_key, modified_after)
-                    raw_files.extend(files)
+                    kb_folder_id = await _kb_subfolder_id(client, folder_name)
+                    kb_files = await _list_files_in_folder(client, kb_folder_id, cat_key, modified_after)
+                    raw_files.extend(kb_files)
                 except HTTPException as e:
                     if e.status_code == 404:
                         logger.warning(f"KB subfolder '{folder_name}' not found in Drive, skipping")
@@ -214,6 +267,12 @@ async def get_file_content(file_id: str):
         mime = meta.get("mimeType", "")
         name = meta.get("name", file_id)
 
+        if not _is_readable(mime):
+            raise HTTPException(
+                415,
+                f"Cannot read binary file ({mime}). Only text files and Google Docs are supported.",
+            )
+
         if mime in _EXPORT_MIMES:
             url = f"{DRIVE_API}/files/{file_id}/export"
             params: dict = {"mimeType": _EXPORT_MIMES[mime]}
@@ -238,3 +297,105 @@ async def get_file_content(file_id: str):
         media_type=content_type,
         headers={"X-File-Name": name, "X-File-Id": file_id},
     )
+
+
+# ---------------------------------------------------------------------------
+# Upload helpers
+# ---------------------------------------------------------------------------
+
+async def _multipart_upload(token: str, metadata: dict, content: str, mime_type: str) -> dict:
+    """Create a new Drive file via multipart upload."""
+    boundary = uuid.uuid4().hex
+    parts = (
+        f"--{boundary}\r\n"
+        f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        f"{json.dumps(metadata)}\r\n"
+        f"--{boundary}\r\n"
+        f"Content-Type: {mime_type}\r\n\r\n"
+        f"{content}\r\n"
+        f"--{boundary}--"
+    )
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+            content=parts.encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": f"multipart/related; boundary={boundary}",
+            },
+        )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(502, f"Drive upload error: {resp.text}")
+    return resp.json()
+
+
+async def _media_upload(token: str, file_id: str, content: str, mime_type: str) -> dict:
+    """Overwrite a Drive file's content via media upload."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"https://www.googleapis.com/upload/drive/v3/files/{file_id}?uploadType=media",
+            content=content.encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": mime_type,
+            },
+        )
+    if resp.status_code != 200:
+        raise HTTPException(502, f"Drive upload error: {resp.text}")
+    return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Create / update / delete routes
+# ---------------------------------------------------------------------------
+
+class CreateFileRequest(BaseModel):
+    name: str
+    content: str
+    folder_id: str | None = None
+    mime_type: str = "text/plain"
+
+
+class UpdateFileRequest(BaseModel):
+    content: str
+
+
+@router.post("/files", status_code=201)
+async def create_file(body: CreateFileRequest):
+    """Create a new text file in Google Drive."""
+    token = await _get_access_token()
+    metadata: dict = {"name": body.name}
+    if body.folder_id:
+        metadata["parents"] = [body.folder_id]
+    data = await _multipart_upload(token, metadata, body.content, body.mime_type)
+    return {"id": data.get("id"), "name": data.get("name", body.name)}
+
+
+@router.put("/files/{file_id}")
+async def update_file(file_id: str, body: UpdateFileRequest):
+    """Overwrite the text content of an existing Google Drive file."""
+    token = await _get_access_token()
+    async with httpx.AsyncClient() as client:
+        meta = await _api_get(client, f"files/{file_id}", {"fields": "id, name, mimeType"})
+    mime = meta.get("mimeType", "text/plain")
+    if not _is_readable(mime):
+        raise HTTPException(415, f"Cannot update binary file ({mime}).")
+    upload_mime = mime if mime.startswith("text/") or mime == "application/json" else "text/plain"
+    data = await _media_upload(token, file_id, body.content, upload_mime)
+    return {"id": data.get("id", file_id), "name": meta.get("name", file_id)}
+
+
+@router.delete("/files/{file_id}", status_code=204)
+async def delete_file(file_id: str):
+    """Move a Google Drive file to trash."""
+    token = await _get_access_token()
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"{DRIVE_API}/files/{file_id}",
+            json={"trashed": True},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if resp.status_code == 404:
+        raise HTTPException(404, "File not found")
+    if resp.status_code not in (200, 204):
+        raise HTTPException(502, f"Drive API error: {resp.text}")
