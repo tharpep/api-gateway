@@ -194,6 +194,48 @@ async def get_tasks(list_id: str, include_completed: bool = Query(default=False)
     return {"tasks": tasks, "count": len(tasks)}
 
 
+class TaskListRequest(BaseModel):
+    title: str
+
+
+@router.post("/lists", status_code=201)
+async def create_task_list(body: TaskListRequest):
+    """Create a new task list."""
+    access_token = await _get_access_token()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{GOOGLE_TASKS_API}/users/@me/lists",
+            json={"title": body.title},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code not in (200, 201):
+        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+
+    item = response.json()
+    return TaskList(id=item["id"], title=item["title"])
+
+
+@router.patch("/lists/{list_id}")
+async def rename_task_list(list_id: str, body: TaskListRequest):
+    """Rename an existing task list."""
+    access_token = await _get_access_token()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.patch(
+            f"{GOOGLE_TASKS_API}/users/@me/lists/{list_id}",
+            json={"title": body.title},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+
+    item = response.json()
+    return TaskList(id=item["id"], title=item["title"])
+
+
 class CreateTaskRequest(BaseModel):
     title: str
     notes: str | None = None
