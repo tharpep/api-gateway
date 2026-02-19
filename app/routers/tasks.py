@@ -1,8 +1,5 @@
 """Tasks endpoint - Google Tasks integration."""
 
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -13,9 +10,6 @@ from app.config import settings
 router = APIRouter()
 
 GOOGLE_TASKS_API = "https://tasks.googleapis.com/tasks/v1"
-DEFAULT_TIMEZONE = "America/New_York"
-
-TARGET_LISTS = ["General", "Purdue", "Mesh"]
 
 _cached_token: TokenData | None = None
 _oauth = GoogleOAuth(scopes=TASKS_SCOPES)
@@ -127,59 +121,6 @@ async def _fetch_tasks_from_list(list_id: str, list_name: str, include_completed
     return tasks
 
 
-async def _fetch_upcoming_tasks(days: int = 7) -> list[Task]:
-    """Fetch upcoming tasks from target lists with due dates within specified days."""
-    task_lists = await _fetch_task_lists()
-    target_lists = [tl for tl in task_lists if tl.title in TARGET_LISTS]
-
-    if not target_lists:
-        return []
-
-    all_tasks = []
-    for task_list in target_lists:
-        tasks = await _fetch_tasks_from_list(task_list.id, task_list.title)
-        all_tasks.extend(tasks)
-
-    tz = ZoneInfo(DEFAULT_TIMEZONE)
-    now = datetime.now(tz)
-    max_due = now + timedelta(days=days)
-
-    filtered_tasks = []
-    for task in all_tasks:
-        if task.due:
-            try:
-                due_dt = datetime.fromisoformat(task.due.replace("Z", "+00:00"))
-                if due_dt <= max_due:
-                    filtered_tasks.append(task)
-            except ValueError:
-                filtered_tasks.append(task)
-        else:
-            filtered_tasks.append(task)
-
-    def sort_key(t: Task):
-        if t.due:
-            try:
-                return (0, datetime.fromisoformat(t.due.replace("Z", "+00:00")))
-            except ValueError:
-                return (1, datetime.max.replace(tzinfo=tz))
-        return (1, datetime.max.replace(tzinfo=tz))
-
-    filtered_tasks.sort(key=sort_key)
-
-    return filtered_tasks
-
-
-@router.get("/upcoming", response_model=TasksResponse)
-async def get_upcoming_tasks(days: int = Query(default=7, ge=1, le=30)):
-    """Get upcoming tasks from General, Purdue, and Mesh lists.
-
-    Args:
-        days: Number of days to look ahead for due dates (default: 7, max: 30)
-    """
-    tasks = await _fetch_upcoming_tasks(days=days)
-    return TasksResponse(tasks=tasks, count=len(tasks))
-
-
 @router.get("/lists")
 async def get_task_lists():
     """Get all task lists."""
@@ -187,10 +128,24 @@ async def get_task_lists():
     return {"lists": task_lists, "count": len(task_lists)}
 
 
+async def _fetch_task_list_title(list_id: str) -> str:
+    """Fetch a task list's title by ID. Falls back to list_id on failure."""
+    access_token = await _get_access_token()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{GOOGLE_TASKS_API}/users/@me/lists/{list_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if response.status_code == 200:
+        return response.json().get("title", list_id)
+    return list_id
+
+
 @router.get("/lists/{list_id}/tasks")
 async def get_tasks(list_id: str, include_completed: bool = Query(default=False)):
     """Get tasks from a specific list. Excludes completed tasks by default."""
-    tasks = await _fetch_tasks_from_list(list_id, "Unknown", include_completed=include_completed)
+    list_title = await _fetch_task_list_title(list_id)
+    tasks = await _fetch_tasks_from_list(list_id, list_title, include_completed=include_completed)
     return {"tasks": tasks, "count": len(tasks)}
 
 
