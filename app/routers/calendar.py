@@ -146,12 +146,14 @@ class AvailabilityResponse(BaseModel):
 
 class CreateEventRequest(BaseModel):
     title: str
-    start: str                  # ISO 8601 datetime or date
-    end: str                    # ISO 8601 datetime or date
+    start: str                      # ISO 8601 datetime or date
+    end: str                        # ISO 8601 datetime or date
     all_day: bool = False
     location: str | None = None
     description: str | None = None
     timezone: str = DEFAULT_TIMEZONE
+    recurrence: list[str] | None = None   # RRULE values, e.g. ["FREQ=WEEKLY;BYDAY=MO"]
+    reminder_minutes: list[int] | None = None  # e.g. [10, 60] for 10 min and 1 hr before
 
 
 class UpdateEventRequest(BaseModel):
@@ -161,6 +163,8 @@ class UpdateEventRequest(BaseModel):
     location: str | None = None
     description: str | None = None
     timezone: str = DEFAULT_TIMEZONE
+    recurrence: list[str] | None = None
+    reminder_minutes: list[int] | None = None
 
 
 @router.post("/events", response_model=CalendarEvent, status_code=201)
@@ -185,6 +189,16 @@ async def create_event(body: CreateEventRequest):
         payload["location"] = body.location
     if body.description:
         payload["description"] = body.description
+    if body.recurrence:
+        payload["recurrence"] = [
+            r if r.startswith("RRULE:") else f"RRULE:{r}"
+            for r in body.recurrence
+        ]
+    if body.reminder_minutes is not None:
+        payload["reminders"] = {
+            "useDefault": False,
+            "overrides": [{"method": "popup", "minutes": m} for m in body.reminder_minutes],
+        }
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -227,6 +241,16 @@ async def update_event(event_id: str, body: UpdateEventRequest):
         payload["start"] = {"dateTime": body.start, "timeZone": body.timezone}
     if body.end is not None:
         payload["end"] = {"dateTime": body.end, "timeZone": body.timezone}
+    if body.recurrence is not None:
+        payload["recurrence"] = [
+            r if r.startswith("RRULE:") else f"RRULE:{r}"
+            for r in body.recurrence
+        ]
+    if body.reminder_minutes is not None:
+        payload["reminders"] = {
+            "useDefault": False,
+            "overrides": [{"method": "popup", "minutes": m} for m in body.reminder_minutes],
+        }
 
     async with httpx.AsyncClient() as client:
         response = await client.patch(
@@ -251,6 +275,37 @@ async def update_event(event_id: str, body: UpdateEventRequest):
         all_day=all_day,
         location=item.get("location"),
     )
+
+
+@router.get("/events/search", response_model=CalendarResponse)
+async def search_events(
+    q: str = Query(..., description="Keyword to search in event titles, descriptions, and locations."),
+    max_results: int = Query(default=10, ge=1, le=50),
+):
+    """Search calendar events by keyword across all time."""
+    access_token = await _get_access_token()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
+            params={"q": q, "singleEvents": "true", "maxResults": max_results},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    if response.status_code != 200:
+        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+    events = []
+    for item in response.json().get("items", []):
+        start = item.get("start", {})
+        end = item.get("end", {})
+        all_day = "date" in start
+        events.append(CalendarEvent(
+            id=item.get("id", ""),
+            title=item.get("summary", "(No title)"),
+            start=start.get("date") or start.get("dateTime", ""),
+            end=end.get("date") or end.get("dateTime", ""),
+            all_day=all_day,
+            location=item.get("location"),
+        ))
+    return CalendarResponse(events=events, count=len(events))
 
 
 @router.delete("/events/{event_id}", status_code=204)
