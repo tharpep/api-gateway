@@ -25,9 +25,14 @@ _EXPORT_MIMES = {
 }
 
 
+_PDF_MIME = "application/pdf"
+
+
 def _is_readable(mime: str) -> bool:
     """Return True if this file can be exported/read as text."""
     if mime in _EXPORT_MIMES:
+        return True
+    if mime == _PDF_MIME:
         return True
     return mime.startswith("text/") or mime in {"application/json", "application/xml"}
 
@@ -270,7 +275,7 @@ async def get_file_content(file_id: str):
         if not _is_readable(mime):
             raise HTTPException(
                 415,
-                f"Cannot read binary file ({mime}). Only text files and Google Docs are supported.",
+                f"Cannot read binary file ({mime}). Only text files, PDFs, and Google Docs are supported.",
             )
 
         if mime in _EXPORT_MIMES:
@@ -290,6 +295,24 @@ async def get_file_content(file_id: str):
 
         if r.status_code != 200:
             raise HTTPException(502, f"Drive download error for '{name}': {r.text}")
+
+    if mime == _PDF_MIME:
+        import io
+        from pypdf import PdfReader
+        try:
+            reader = PdfReader(io.BytesIO(r.content))
+            text = "\n\n".join(
+                page.extract_text() or "" for page in reader.pages
+            ).strip()
+        except Exception as e:
+            raise HTTPException(502, f"PDF extraction failed for '{name}': {e}")
+        if not text:
+            raise HTTPException(422, f"No text could be extracted from '{name}'.")
+        return Response(
+            content=text.encode("utf-8"),
+            media_type="text/plain",
+            headers={"X-File-Name": name, "X-File-Id": file_id},
+        )
 
     content_type = r.headers.get("content-type", "application/octet-stream")
     return Response(
