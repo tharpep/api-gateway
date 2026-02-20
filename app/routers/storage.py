@@ -257,6 +257,90 @@ async def list_kb_files(
     return DriveFilesResponse(files=files, count=len(files))
 
 
+class DriveFolder(BaseModel):
+    id: str
+    name: str
+    parent_id: str | None = None
+
+
+class DriveFoldersResponse(BaseModel):
+    folders: list[DriveFolder]
+    count: int
+
+
+@router.get("/folders", response_model=DriveFoldersResponse)
+async def list_folders(
+    parent_id: str | None = Query(
+        default=None,
+        description="Scope to a specific parent folder ID.",
+    ),
+    query: str | None = Query(
+        default=None,
+        description="Drive name filter, e.g. 'name contains \"Projects\"'.",
+    ),
+    max_results: int = Query(default=20, ge=1, le=50),
+):
+    """List Drive folders, optionally scoped to a parent and/or filtered by name."""
+    q_parts = [f"mimeType = '{_FOLDER_MIME}'", "trashed = false"]
+    if parent_id:
+        q_parts.append(f"'{parent_id}' in parents")
+    if query:
+        q_parts.append(f"({query})")
+    async with httpx.AsyncClient() as client:
+        data = await _api_get(
+            client,
+            "files",
+            {
+                "q": " and ".join(q_parts),
+                "fields": "files(id, name, parents)",
+                "pageSize": max_results,
+                "orderBy": "name",
+            },
+        )
+    folders = [
+        DriveFolder(
+            id=f["id"],
+            name=f["name"],
+            parent_id=(f.get("parents") or [None])[0],
+        )
+        for f in data.get("files", [])
+    ]
+    return DriveFoldersResponse(folders=folders, count=len(folders))
+
+
+class CreateFolderRequest(BaseModel):
+    name: str
+    parent_id: str | None = None
+
+
+@router.post("/folders", status_code=201)
+async def create_folder(body: CreateFolderRequest):
+    """Create a new folder in Google Drive."""
+    global _cached_token
+    metadata: dict = {"name": body.name, "mimeType": _FOLDER_MIME}
+    if body.parent_id:
+        metadata["parents"] = [body.parent_id]
+    token = await _get_access_token()
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{DRIVE_API}/files",
+            json=metadata,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code == 401:
+            _cached_token = None
+            token = await _get_access_token()
+            resp = await client.post(
+                f"{DRIVE_API}/files",
+                json=metadata,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(502, f"Drive folder creation failed: {resp.text}")
+    data = resp.json()
+    return {"id": data.get("id"), "name": data.get("name", body.name)}
+
+
 async def _fetch_text_content(
     client: httpx.AsyncClient, file_id: str, mime: str, name: str
 ) -> str:
