@@ -538,6 +538,106 @@ async def append_to_file(file_id: str, body: AppendFileRequest):
     return {"id": file_id, "name": name}
 
 
+class CopyFromGithubRequest(BaseModel):
+    owner: str
+    repo: str
+    path: str
+    ref: str | None = None          # branch, tag, or SHA — defaults to default branch
+    folder_id: str | None = None    # Drive destination folder
+    name: str | None = None         # defaults to the filename portion of path
+    mime_type: str = "text/plain"
+
+
+@router.post("/files/copy-from-github", status_code=201)
+async def copy_github_to_drive(body: CopyFromGithubRequest):
+    """Fetch a text file from GitHub and write it directly to Drive — no agent round-trip."""
+    if not settings.github_token:
+        raise HTTPException(503, "GitHub token not configured")
+
+    params = {}
+    if body.ref:
+        params["ref"] = body.ref
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"https://api.github.com/repos/{body.owner}/{body.repo}/contents/{body.path}",
+            headers={
+                "Authorization": f"Bearer {settings.github_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            params=params,
+        )
+
+    if resp.status_code == 404:
+        raise HTTPException(404, f"File not found in GitHub: {body.path}")
+    if not resp.is_success:
+        raise HTTPException(502, f"GitHub API error: {resp.text}")
+
+    data = resp.json()
+    if isinstance(data, list):
+        raise HTTPException(422, f"'{body.path}' is a directory, not a file.")
+    if data.get("encoding") != "base64":
+        raise HTTPException(422, f"Unexpected GitHub encoding: {data.get('encoding')}")
+
+    import base64 as _base64
+    try:
+        content = _base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+    except Exception as e:
+        raise HTTPException(422, f"Could not decode file content: {e}")
+
+    filename = body.name or body.path.split("/")[-1]
+    metadata: dict = {"name": filename}
+    if body.folder_id:
+        metadata["parents"] = [body.folder_id]
+    if body.mime_type in _GOOGLE_WORKSPACE_MIMES:
+        metadata["mimeType"] = body.mime_type
+        upload_mime = "text/plain"
+    else:
+        upload_mime = body.mime_type
+
+    drive_data = await _multipart_upload(metadata, content, upload_mime)
+    return {"id": drive_data.get("id"), "name": drive_data.get("name", filename)}
+
+
+class CopyDriveFileRequest(BaseModel):
+    name: str | None = None         # defaults to "Copy of {original name}"
+    folder_id: str | None = None    # destination folder; defaults to same folder as original
+
+
+@router.post("/files/{file_id}/copy", status_code=201)
+async def copy_drive_file(file_id: str, body: CopyDriveFileRequest):
+    """Copy a Drive file within Drive. Content transfer is handled by Drive internally."""
+    global _cached_token
+    payload: dict = {}
+    if body.name:
+        payload["name"] = body.name
+    if body.folder_id:
+        payload["parents"] = [body.folder_id]
+
+    token = await _get_access_token()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            f"{DRIVE_API}/files/{file_id}/copy",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code == 401:
+            _cached_token = None
+            token = await _get_access_token()
+            resp = await client.post(
+                f"{DRIVE_API}/files/{file_id}/copy",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    if resp.status_code == 404:
+        raise HTTPException(404, "Source file not found.")
+    if resp.status_code not in (200, 201):
+        raise HTTPException(502, f"Drive copy error: {resp.text}")
+    r = resp.json()
+    return {"id": r.get("id"), "name": r.get("name")}
+
+
 @router.put("/files/{file_id}")
 async def update_file(file_id: str, body: UpdateFileRequest):
     """Overwrite the text content of an existing Google Drive file."""
