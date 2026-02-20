@@ -429,7 +429,7 @@ async def _multipart_upload(metadata: dict, content: str, mime_type: str) -> dic
     ).encode("utf-8")
     content_type = f"multipart/related; boundary={boundary}"
     token = await _get_access_token()
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
             content=encoded,
@@ -454,7 +454,7 @@ async def _media_upload(file_id: str, content: str, mime_type: str) -> dict:
     encoded = content.encode("utf-8")
     url = f"https://www.googleapis.com/upload/drive/v3/files/{file_id}?uploadType=media"
     token = await _get_access_token()
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.patch(
             url,
             content=encoded,
