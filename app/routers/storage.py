@@ -26,6 +26,7 @@ _EXPORT_MIMES = {
 
 
 _PDF_MIME = "application/pdf"
+_GOOGLE_WORKSPACE_MIMES = set(_EXPORT_MIMES)  # Google Docs, Sheets, Slides
 
 
 def _is_readable(mime: str) -> bool:
@@ -256,15 +257,53 @@ async def list_kb_files(
     return DriveFilesResponse(files=files, count=len(files))
 
 
-@router.get("/files/{file_id}/content")
-async def get_file_content(file_id: str):
-    """Download a file's raw content from Drive.
+async def _fetch_text_content(
+    client: httpx.AsyncClient, file_id: str, mime: str, name: str
+) -> str:
+    """Download a Drive file and return its content as a string.
 
-    Google Docs/Sheets/Slides are exported as plain text or CSV.
-    All other files (PDF, DOCX, TXT, etc.) are returned as-is.
-    Response includes X-File-Name, X-File-Id, and X-File-Category headers.
+    Handles Google Workspace export, PDF parsing, and raw text reads.
     """
     global _cached_token
+    if mime in _EXPORT_MIMES:
+        url = f"{DRIVE_API}/files/{file_id}/export"
+        params: dict = {"mimeType": _EXPORT_MIMES[mime]}
+    else:
+        url = f"{DRIVE_API}/files/{file_id}"
+        params = {"alt": "media"}
+
+    token = await _get_access_token()
+    r = await client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
+    if r.status_code == 401:
+        _cached_token = None
+        token = await _get_access_token()
+        r = await client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
+    if r.status_code != 200:
+        raise HTTPException(502, f"Drive download error for '{name}': {r.text}")
+
+    if mime == _PDF_MIME:
+        import io
+        from pypdf import PdfReader
+        try:
+            reader = PdfReader(io.BytesIO(r.content))
+            text = "\n\n".join(page.extract_text() or "" for page in reader.pages).strip()
+        except Exception as e:
+            raise HTTPException(502, f"PDF extraction failed for '{name}': {e}")
+        if not text:
+            raise HTTPException(422, f"No text could be extracted from '{name}'.")
+        return text
+
+    return r.content.decode("utf-8", errors="replace")
+
+
+@router.get("/files/{file_id}/content")
+async def get_file_content(file_id: str):
+    """Download a file's text content from Drive.
+
+    Google Docs/Sheets/Slides are exported as plain text or CSV.
+    PDFs are parsed and returned as plain text.
+    Response includes X-File-Name and X-File-Id headers.
+    """
     async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
         meta = await _api_get(
             client, f"files/{file_id}", {"fields": "id, name, mimeType, parents"}
@@ -278,46 +317,11 @@ async def get_file_content(file_id: str):
                 f"Cannot read binary file ({mime}). Only text files, PDFs, and Google Docs are supported.",
             )
 
-        if mime in _EXPORT_MIMES:
-            url = f"{DRIVE_API}/files/{file_id}/export"
-            params: dict = {"mimeType": _EXPORT_MIMES[mime]}
-        else:
-            url = f"{DRIVE_API}/files/{file_id}"
-            params = {"alt": "media"}
+        text = await _fetch_text_content(client, file_id, mime, name)
 
-        token = await _get_access_token()
-        r = await client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
-
-        if r.status_code == 401:
-            _cached_token = None
-            token = await _get_access_token()
-            r = await client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
-
-        if r.status_code != 200:
-            raise HTTPException(502, f"Drive download error for '{name}': {r.text}")
-
-    if mime == _PDF_MIME:
-        import io
-        from pypdf import PdfReader
-        try:
-            reader = PdfReader(io.BytesIO(r.content))
-            text = "\n\n".join(
-                page.extract_text() or "" for page in reader.pages
-            ).strip()
-        except Exception as e:
-            raise HTTPException(502, f"PDF extraction failed for '{name}': {e}")
-        if not text:
-            raise HTTPException(422, f"No text could be extracted from '{name}'.")
-        return Response(
-            content=text.encode("utf-8"),
-            media_type="text/plain",
-            headers={"X-File-Name": name, "X-File-Id": file_id},
-        )
-
-    content_type = r.headers.get("content-type", "application/octet-stream")
     return Response(
-        content=r.content,
-        media_type=content_type,
+        content=text.encode("utf-8"),
+        media_type="text/plain",
         headers={"X-File-Name": name, "X-File-Id": file_id},
     )
 
@@ -400,14 +404,54 @@ class UpdateFileRequest(BaseModel):
     content: str
 
 
+class AppendFileRequest(BaseModel):
+    content: str
+    separator: str = "\n\n"
+
+
 @router.post("/files", status_code=201)
 async def create_file(body: CreateFileRequest):
-    """Create a new text file in Google Drive."""
+    """Create a new file in Google Drive.
+
+    Pass mime_type='application/vnd.google-apps.document' to create a native
+    Google Doc — Drive converts the plain-text content on ingestion.
+    """
     metadata: dict = {"name": body.name}
     if body.folder_id:
         metadata["parents"] = [body.folder_id]
-    data = await _multipart_upload(metadata, body.content, body.mime_type)
+    if body.mime_type in _GOOGLE_WORKSPACE_MIMES:
+        # Drive requires the target mimeType in metadata for Workspace types;
+        # content is uploaded as plain text and converted server-side.
+        metadata["mimeType"] = body.mime_type
+        upload_mime = "text/plain"
+    else:
+        upload_mime = body.mime_type
+    data = await _multipart_upload(metadata, body.content, upload_mime)
     return {"id": data.get("id"), "name": data.get("name", body.name)}
+
+
+@router.post("/files/{file_id}/append")
+async def append_to_file(file_id: str, body: AppendFileRequest):
+    """Append text to an existing Drive file or Google Doc.
+
+    Reads the current content, concatenates the new text (with separator),
+    then writes back. Works for plain text files and Google Docs alike.
+    """
+    async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+        meta = await _api_get(client, f"files/{file_id}", {"fields": "id, name, mimeType"})
+        mime = meta.get("mimeType", "")
+        name = meta.get("name", file_id)
+
+        if not _is_readable(mime):
+            raise HTTPException(415, f"Cannot append to binary file ({mime}).")
+        if mime == _PDF_MIME:
+            raise HTTPException(415, "Cannot append to a PDF.")
+
+        current = await _fetch_text_content(client, file_id, mime, name)
+
+    combined = current + body.separator + body.content
+    await _media_upload(file_id, combined, "text/plain")
+    return {"id": file_id, "name": name}
 
 
 @router.put("/files/{file_id}")
