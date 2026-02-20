@@ -34,5 +34,9 @@ class Settings(BaseSettings):
     # Tavily (web search)
     tavily_api_key: str = ""
 
+    # GitHub
+    github_token: str = ""
+    github_owner: str = "tharpep"  # Default owner for repo-scoped requests
+
 
 settings = Settings()

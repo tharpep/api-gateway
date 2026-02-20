@@ -1,0 +1,398 @@
+"""GitHub integration — repos, issues, PRs, and code."""
+
+import asyncio
+import base64
+import logging
+
+import httpx
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
+from app.config import settings
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+GITHUB_API = "https://api.github.com"
+
+
+def _headers() -> dict[str, str]:
+    if not settings.github_token:
+        raise HTTPException(503, "GitHub token not configured")
+    return {
+        "Authorization": f"Bearer {settings.github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _owner(owner: str | None) -> str:
+    """Resolve owner — falls back to configured default."""
+    return owner or settings.github_owner
+
+
+async def _gh(method: str, path: str, **kwargs) -> httpx.Response:
+    """Make an authenticated GitHub API request."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.request(
+            method, f"{GITHUB_API}{path}", headers=_headers(), **kwargs
+        )
+    if resp.status_code == 404:
+        raise HTTPException(404, f"GitHub resource not found: {path}")
+    if resp.status_code == 422:
+        raise HTTPException(422, f"GitHub validation error: {resp.text}")
+    if not resp.is_success:
+        raise HTTPException(502, f"GitHub API error {resp.status_code}: {resp.text}")
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# Repos
+# ---------------------------------------------------------------------------
+
+
+@router.get("/repos")
+async def list_repos(
+    sort: str = Query(default="updated", description="'updated', 'created', 'pushed', 'full_name'"),
+    per_page: int = Query(default=30, ge=1, le=100),
+):
+    """List all repos accessible to the authenticated user."""
+    resp = await _gh(
+        "GET", "/user/repos", params={"type": "owner", "sort": sort, "per_page": per_page}
+    )
+    return [
+        {
+            "name": r["name"],
+            "full_name": r["full_name"],
+            "description": r["description"],
+            "language": r["language"],
+            "stars": r["stargazers_count"],
+            "forks": r["forks_count"],
+            "open_issues": r["open_issues_count"],
+            "private": r["private"],
+            "default_branch": r["default_branch"],
+            "url": r["html_url"],
+            "updated_at": r["updated_at"],
+        }
+        for r in resp.json()
+    ]
+
+
+@router.get("/repos/{owner}/{repo}")
+async def get_repo(owner: str, repo: str):
+    """Get details for a specific repository."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}")
+    r = resp.json()
+    return {
+        "name": r["name"],
+        "full_name": r["full_name"],
+        "description": r["description"],
+        "language": r["language"],
+        "stars": r["stargazers_count"],
+        "forks": r["forks_count"],
+        "open_issues": r["open_issues_count"],
+        "default_branch": r["default_branch"],
+        "private": r["private"],
+        "url": r["html_url"],
+        "updated_at": r["updated_at"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Issues
+# ---------------------------------------------------------------------------
+
+
+@router.get("/repos/{owner}/{repo}/issues")
+async def list_issues(
+    owner: str,
+    repo: str,
+    state: str = Query(default="open", description="'open', 'closed', or 'all'"),
+    labels: str | None = Query(default=None, description="Comma-separated label names"),
+    per_page: int = Query(default=20, ge=1, le=100),
+):
+    """List issues in a repository. Excludes pull requests."""
+    params: dict = {"state": state, "per_page": per_page}
+    if labels:
+        params["labels"] = labels
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/issues", params=params)
+    return [
+        {
+            "number": i["number"],
+            "title": i["title"],
+            "state": i["state"],
+            "labels": [lb["name"] for lb in i["labels"]],
+            "author": i["user"]["login"],
+            "created_at": i["created_at"],
+            "updated_at": i["updated_at"],
+            "url": i["html_url"],
+        }
+        for i in resp.json()
+        if "pull_request" not in i  # issues endpoint returns PRs too — filter them out
+    ]
+
+
+@router.get("/repos/{owner}/{repo}/issues/{number}")
+async def get_issue(owner: str, repo: str, number: int):
+    """Get a specific issue including all comments."""
+    issue_resp, comments_resp = await asyncio.gather(
+        _gh("GET", f"/repos/{owner}/{repo}/issues/{number}"),
+        _gh("GET", f"/repos/{owner}/{repo}/issues/{number}/comments"),
+    )
+    i = issue_resp.json()
+    return {
+        "number": i["number"],
+        "title": i["title"],
+        "state": i["state"],
+        "body": i["body"],
+        "author": i["user"]["login"],
+        "labels": [lb["name"] for lb in i["labels"]],
+        "created_at": i["created_at"],
+        "updated_at": i["updated_at"],
+        "url": i["html_url"],
+        "comments": [
+            {
+                "author": c["user"]["login"],
+                "body": c["body"],
+                "created_at": c["created_at"],
+            }
+            for c in comments_resp.json()
+        ],
+    }
+
+
+class CreateIssueRequest(BaseModel):
+    title: str
+    body: str | None = None
+    labels: list[str] | None = None
+
+
+@router.post("/repos/{owner}/{repo}/issues", status_code=201)
+async def create_issue(owner: str, repo: str, req: CreateIssueRequest):
+    """Open a new issue."""
+    payload: dict = {"title": req.title}
+    if req.body:
+        payload["body"] = req.body
+    if req.labels:
+        payload["labels"] = req.labels
+    resp = await _gh("POST", f"/repos/{owner}/{repo}/issues", json=payload)
+    i = resp.json()
+    return {"number": i["number"], "title": i["title"], "url": i["html_url"]}
+
+
+class UpdateIssueRequest(BaseModel):
+    title: str | None = None
+    body: str | None = None
+    state: str | None = None        # "open" or "closed"
+    labels: list[str] | None = None
+
+
+@router.patch("/repos/{owner}/{repo}/issues/{number}")
+async def update_issue(owner: str, repo: str, number: int, req: UpdateIssueRequest):
+    """Update an issue — title, body, state (open/close), or labels."""
+    payload: dict = {}
+    if req.title is not None:
+        payload["title"] = req.title
+    if req.body is not None:
+        payload["body"] = req.body
+    if req.state is not None:
+        payload["state"] = req.state
+    if req.labels is not None:
+        payload["labels"] = req.labels
+    resp = await _gh("PATCH", f"/repos/{owner}/{repo}/issues/{number}", json=payload)
+    i = resp.json()
+    return {"number": i["number"], "title": i["title"], "state": i["state"], "url": i["html_url"]}
+
+
+class CommentRequest(BaseModel):
+    body: str
+
+
+@router.post("/repos/{owner}/{repo}/issues/{number}/comments", status_code=201)
+async def add_issue_comment(owner: str, repo: str, number: int, req: CommentRequest):
+    """Add a comment to an issue."""
+    resp = await _gh(
+        "POST",
+        f"/repos/{owner}/{repo}/issues/{number}/comments",
+        json={"body": req.body},
+    )
+    c = resp.json()
+    return {"id": c["id"], "url": c["html_url"]}
+
+
+# ---------------------------------------------------------------------------
+# Pull Requests
+# ---------------------------------------------------------------------------
+
+
+@router.get("/repos/{owner}/{repo}/pulls")
+async def list_prs(
+    owner: str,
+    repo: str,
+    state: str = Query(default="open", description="'open', 'closed', or 'all'"),
+    per_page: int = Query(default=20, ge=1, le=100),
+):
+    """List pull requests in a repository."""
+    resp = await _gh(
+        "GET", f"/repos/{owner}/{repo}/pulls", params={"state": state, "per_page": per_page}
+    )
+    return [
+        {
+            "number": p["number"],
+            "title": p["title"],
+            "state": p["state"],
+            "author": p["user"]["login"],
+            "head": p["head"]["ref"],
+            "base": p["base"]["ref"],
+            "draft": p["draft"],
+            "created_at": p["created_at"],
+            "url": p["html_url"],
+        }
+        for p in resp.json()
+    ]
+
+
+@router.get("/repos/{owner}/{repo}/pulls/{number}")
+async def get_pr(owner: str, repo: str, number: int):
+    """Get details for a specific pull request."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/pulls/{number}")
+    p = resp.json()
+    return {
+        "number": p["number"],
+        "title": p["title"],
+        "state": p["state"],
+        "body": p["body"],
+        "author": p["user"]["login"],
+        "head": p["head"]["ref"],
+        "base": p["base"]["ref"],
+        "draft": p["draft"],
+        "mergeable": p.get("mergeable"),
+        "created_at": p["created_at"],
+        "url": p["html_url"],
+    }
+
+
+@router.post("/repos/{owner}/{repo}/pulls/{number}/comments", status_code=201)
+async def add_pr_comment(owner: str, repo: str, number: int, req: CommentRequest):
+    """Add a comment to a pull request."""
+    # PRs use the issues comments endpoint for general (non-review) comments
+    resp = await _gh(
+        "POST",
+        f"/repos/{owner}/{repo}/issues/{number}/comments",
+        json={"body": req.body},
+    )
+    c = resp.json()
+    return {"id": c["id"], "url": c["html_url"]}
+
+
+class CreatePRRequest(BaseModel):
+    title: str
+    head: str           # source branch
+    base: str           # target branch
+    body: str | None = None
+    draft: bool = False
+
+
+@router.post("/repos/{owner}/{repo}/pulls", status_code=201)
+async def create_pr(owner: str, repo: str, req: CreatePRRequest):
+    """Open a new pull request."""
+    payload: dict = {"title": req.title, "head": req.head, "base": req.base, "draft": req.draft}
+    if req.body:
+        payload["body"] = req.body
+    resp = await _gh("POST", f"/repos/{owner}/{repo}/pulls", json=payload)
+    p = resp.json()
+    return {"number": p["number"], "title": p["title"], "draft": p["draft"], "url": p["html_url"]}
+
+
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
+
+
+@router.get("/search/issues")
+async def search_issues(
+    q: str = Query(..., description="Search query. Append 'repo:owner/name' to scope to a repo."),
+    per_page: int = Query(default=10, ge=1, le=30),
+):
+    """Search issues and PRs across GitHub."""
+    resp = await _gh("GET", "/search/issues", params={"q": q, "per_page": per_page})
+    return [
+        {
+            "number": i["number"],
+            "title": i["title"],
+            "state": i["state"],
+            "repo": i["repository_url"].split("/repos/")[-1],
+            "type": "pr" if "pull_request" in i else "issue",
+            "created_at": i["created_at"],
+            "url": i["html_url"],
+        }
+        for i in resp.json().get("items", [])
+    ]
+
+
+@router.get("/search/code")
+async def search_code(
+    q: str = Query(..., description="Search query. Use 'repo:owner/name' to scope to a repo."),
+    per_page: int = Query(default=10, ge=1, le=30),
+):
+    """Search code across GitHub. Rate-limited to 30 requests/minute."""
+    resp = await _gh("GET", "/search/code", params={"q": q, "per_page": per_page})
+    return [
+        {
+            "name": f["name"],
+            "path": f["path"],
+            "repo": f["repository"]["full_name"],
+            "url": f["html_url"],
+            "sha": f["sha"],
+        }
+        for f in resp.json().get("items", [])
+    ]
+
+
+# ---------------------------------------------------------------------------
+# File contents
+# ---------------------------------------------------------------------------
+
+
+@router.get("/repos/{owner}/{repo}/contents/{path:path}")
+async def get_github_file(
+    owner: str,
+    repo: str,
+    path: str,
+    ref: str | None = Query(default=None, description="Branch, tag, or commit SHA. Defaults to default branch."),
+):
+    """Read a file or list a directory from a GitHub repository."""
+    params = {}
+    if ref:
+        params["ref"] = ref
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/contents/{path}", params=params)
+    data = resp.json()
+
+    if isinstance(data, list):
+        # Directory listing
+        return {
+            "type": "directory",
+            "path": path,
+            "entries": [
+                {"name": f["name"], "type": f["type"], "path": f["path"], "size": f.get("size")}
+                for f in data
+            ],
+        }
+
+    content = ""
+    if data.get("encoding") == "base64":
+        try:
+            content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+        except Exception:
+            raise HTTPException(422, f"Could not decode file content for '{path}'.")
+    else:
+        content = data.get("content", "")
+
+    return {
+        "type": "file",
+        "name": data["name"],
+        "path": data["path"],
+        "size": data["size"],
+        "sha": data["sha"],
+        "content": content,
+    }
