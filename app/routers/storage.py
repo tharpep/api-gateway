@@ -44,6 +44,7 @@ _KB_SUBFOLDERS: dict[str, str] = {
     "purdue": "Purdue",
     "career": "Career",
     "reference": "Reference",
+    "conversations": "Conversations",
 }
 
 # Module-level folder ID cache — Drive folder IDs are stable across requests
