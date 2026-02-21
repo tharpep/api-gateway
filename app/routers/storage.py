@@ -501,6 +501,85 @@ async def _media_upload(file_id: str, content: str, mime_type: str) -> dict:
 # Create / update / delete routes
 # ---------------------------------------------------------------------------
 
+@router.get("/files/{file_id}")
+async def get_file_metadata(file_id: str):
+    """Get metadata for a Drive file — name, MIME type, size, and modified time.
+
+    Use this to identify a file type before reading or manipulating it.
+    """
+    async with httpx.AsyncClient() as client:
+        meta = await _api_get(
+            client,
+            f"files/{file_id}",
+            {"fields": "id, name, mimeType, modifiedTime, size, parents"},
+        )
+    return DriveFile(
+        id=meta["id"],
+        name=meta.get("name", file_id),
+        mime_type=meta.get("mimeType", ""),
+        modified_time=meta.get("modifiedTime", ""),
+        size=int(meta["size"]) if meta.get("size") else None,
+    )
+
+
+class MoveFileRequest(BaseModel):
+    name: str | None = None          # rename; omit to keep current name
+    folder_id: str | None = None     # move to this folder; omit to keep current location
+
+
+@router.patch("/files/{file_id}")
+async def move_file(file_id: str, body: MoveFileRequest):
+    """Rename and/or move a Drive file to a different folder."""
+    global _cached_token
+    if not body.name and not body.folder_id:
+        raise HTTPException(400, "Provide at least one of: name, folder_id")
+
+    token = await _get_access_token()
+    params: dict = {}
+    metadata: dict = {}
+
+    if body.name:
+        metadata["name"] = body.name
+
+    if body.folder_id:
+        # Fetch current parents so we can remove them when adding the new one
+        async with httpx.AsyncClient() as client:
+            meta = await _api_get(client, f"files/{file_id}", {"fields": "parents"})
+        current_parents = ",".join(meta.get("parents", []))
+        params["addParents"] = body.folder_id
+        if current_parents:
+            params["removeParents"] = current_parents
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.patch(
+            f"{DRIVE_API}/files/{file_id}",
+            json=metadata,
+            params={**params, "fields": "id, name, mimeType, modifiedTime, size"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if resp.status_code == 401:
+            _cached_token = None
+            token = await _get_access_token()
+            resp = await client.patch(
+                f"{DRIVE_API}/files/{file_id}",
+                json=metadata,
+                params={**params, "fields": "id, name, mimeType, modifiedTime, size"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    if resp.status_code == 404:
+        raise HTTPException(404, "File not found")
+    if resp.status_code != 200:
+        raise HTTPException(502, f"Drive API error: {resp.text}")
+    r = resp.json()
+    return DriveFile(
+        id=r["id"],
+        name=r.get("name", file_id),
+        mime_type=r.get("mimeType", ""),
+        modified_time=r.get("modifiedTime", ""),
+        size=int(r["size"]) if r.get("size") else None,
+    )
+
+
 class CreateFileRequest(BaseModel):
     name: str
     content: str

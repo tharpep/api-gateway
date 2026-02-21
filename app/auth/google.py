@@ -28,10 +28,14 @@ TASKS_SCOPES = [
 ]
 
 DRIVE_SCOPES = [
-    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive",
 ]
 
-ALL_SCOPES = CALENDAR_SCOPES + GMAIL_SCOPES + TASKS_SCOPES + DRIVE_SCOPES
+SHEETS_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+]
+
+ALL_SCOPES = CALENDAR_SCOPES + GMAIL_SCOPES + TASKS_SCOPES + DRIVE_SCOPES + SHEETS_SCOPES
 
 
 class TokenData(BaseModel):

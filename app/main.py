@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.dependencies import verify_api_key
-from app.routers import ai, calendar, context, email, github, health, kb, notify, search, storage, tasks, webhooks
+from app.routers import ai, calendar, context, email, github, health, kb, notify, search, sheets, storage, tasks, webhooks
 
 app = FastAPI(
     title="API Gateway",
@@ -60,5 +60,8 @@ app.include_router(
 )
 app.include_router(
     github.router, prefix="/github", tags=["github"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    sheets.router, prefix="/sheets", tags=["sheets"], dependencies=[Depends(verify_api_key)]
 )
 
