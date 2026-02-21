@@ -118,24 +118,47 @@ async def _list_files_in_folder(
     category: str,
     modified_after: str | None,
 ) -> list[dict]:
-    """List non-folder files in a Drive folder, returning raw dicts with category set."""
-    q = f"'{folder_id}' in parents and trashed = false and mimeType != '{_FOLDER_MIME}'"
-    if modified_after:
-        q += f" and modifiedTime > '{modified_after}'"
-    data = await _api_get(
-        client,
-        "files",
-        {
-            "q": q,
-            "fields": "files(id, name, mimeType, modifiedTime, size)",
-            "pageSize": 100,
-            "orderBy": "modifiedTime desc",
-        },
-    )
-    return [
-        {**f, "category": category}
-        for f in data.get("files", [])
-    ]
+    """BFS over a Drive folder tree, returning all non-folder files with category set.
+
+    The category is always the top-level KB subfolder category regardless of
+    how deeply nested the file is.
+    """
+    collected: list[dict] = []
+    queue: list[str] = [folder_id]
+
+    while queue:
+        current_id = queue.pop(0)
+
+        # Fetch non-folder files in this folder
+        file_q = f"'{current_id}' in parents and trashed = false and mimeType != '{_FOLDER_MIME}'"
+        if modified_after:
+            file_q += f" and modifiedTime > '{modified_after}'"
+        file_data = await _api_get(
+            client,
+            "files",
+            {
+                "q": file_q,
+                "fields": "files(id, name, mimeType, modifiedTime, size)",
+                "pageSize": 100,
+                "orderBy": "modifiedTime desc",
+            },
+        )
+        collected.extend({**f, "category": category} for f in file_data.get("files", []))
+
+        # Fetch subfolders in this folder and enqueue them
+        folder_q = f"'{current_id}' in parents and trashed = false and mimeType = '{_FOLDER_MIME}'"
+        folder_data = await _api_get(
+            client,
+            "files",
+            {
+                "q": folder_q,
+                "fields": "files(id)",
+                "pageSize": 100,
+            },
+        )
+        queue.extend(f["id"] for f in folder_data.get("files", []))
+
+    return collected
 
 
 async def _list_files_general(
