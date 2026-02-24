@@ -394,3 +394,219 @@ async def get_github_file(
         "sha": data["sha"],
         "content": content,
     }
+
+
+# ---------------------------------------------------------------------------
+# Commits
+# ---------------------------------------------------------------------------
+
+
+@router.get("/repos/{owner}/{repo}/commits")
+async def list_commits(
+    owner: str,
+    repo: str,
+    sha: str | None = Query(default=None, description="Branch, tag, or SHA to start from."),
+    author: str | None = Query(default=None, description="Filter by GitHub username or email."),
+    path: str | None = Query(default=None, description="Only commits touching this file path."),
+    since: str | None = Query(default=None, description="ISO 8601 timestamp — only commits after this."),
+    until: str | None = Query(default=None, description="ISO 8601 timestamp — only commits before this."),
+    per_page: int = Query(default=20, ge=1, le=100),
+):
+    """List commits on a repository."""
+    params: dict = {"per_page": per_page}
+    for k, v in {"sha": sha, "author": author, "path": path, "since": since, "until": until}.items():
+        if v:
+            params[k] = v
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/commits", params=params)
+    return [
+        {
+            "sha": c["sha"],
+            "short_sha": c["sha"][:7],
+            "message": c["commit"]["message"].splitlines()[0],
+            "author": c["commit"]["author"]["name"],
+            "author_login": (c.get("author") or {}).get("login"),
+            "date": c["commit"]["author"]["date"],
+            "url": c["html_url"],
+        }
+        for c in resp.json()
+    ]
+
+
+@router.get("/repos/{owner}/{repo}/commits/{sha}")
+async def get_commit(owner: str, repo: str, sha: str):
+    """Get a single commit with stats and changed files."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/commits/{sha}")
+    c = resp.json()
+    return {
+        "sha": c["sha"],
+        "message": c["commit"]["message"],
+        "author": c["commit"]["author"]["name"],
+        "author_login": (c.get("author") or {}).get("login"),
+        "date": c["commit"]["author"]["date"],
+        "stats": c.get("stats", {}),
+        "files": [
+            {
+                "filename": f["filename"],
+                "status": f["status"],
+                "additions": f["additions"],
+                "deletions": f["deletions"],
+                "patch": f.get("patch", "")[:2000],
+            }
+            for f in c.get("files", [])
+        ],
+        "url": c["html_url"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Branches & Tags
+# ---------------------------------------------------------------------------
+
+
+@router.get("/repos/{owner}/{repo}/branches")
+async def list_branches(owner: str, repo: str, per_page: int = Query(default=30, ge=1, le=100)):
+    """List branches in a repository."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/branches", params={"per_page": per_page})
+    return [
+        {
+            "name": b["name"],
+            "sha": b["commit"]["sha"],
+            "protected": b["protected"],
+        }
+        for b in resp.json()
+    ]
+
+
+@router.get("/repos/{owner}/{repo}/tags")
+async def list_tags(owner: str, repo: str, per_page: int = Query(default=30, ge=1, le=100)):
+    """List tags in a repository."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/tags", params={"per_page": per_page})
+    return [{"name": t["name"], "sha": t["commit"]["sha"]} for t in resp.json()]
+
+
+# ---------------------------------------------------------------------------
+# Releases
+# ---------------------------------------------------------------------------
+
+
+@router.get("/repos/{owner}/{repo}/releases")
+async def list_releases(owner: str, repo: str, per_page: int = Query(default=10, ge=1, le=100)):
+    """List releases in a repository."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/releases", params={"per_page": per_page})
+    return [
+        {
+            "id": r["id"],
+            "tag": r["tag_name"],
+            "name": r["name"],
+            "draft": r["draft"],
+            "prerelease": r["prerelease"],
+            "body": r.get("body", ""),
+            "published_at": r["published_at"],
+            "url": r["html_url"],
+        }
+        for r in resp.json()
+    ]
+
+
+@router.get("/repos/{owner}/{repo}/releases/latest")
+async def get_latest_release(owner: str, repo: str):
+    """Get the latest published (non-draft, non-prerelease) release."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/releases/latest")
+    r = resp.json()
+    return {
+        "id": r["id"],
+        "tag": r["tag_name"],
+        "name": r["name"],
+        "body": r.get("body", ""),
+        "published_at": r["published_at"],
+        "url": r["html_url"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# PR reviews & files
+# ---------------------------------------------------------------------------
+
+
+@router.get("/repos/{owner}/{repo}/pulls/{number}/reviews")
+async def get_pr_reviews(owner: str, repo: str, number: int):
+    """Get all reviews on a pull request."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/pulls/{number}/reviews")
+    return [
+        {
+            "id": rv["id"],
+            "author": rv["user"]["login"],
+            "state": rv["state"],  # APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED
+            "body": rv.get("body", ""),
+            "submitted_at": rv.get("submitted_at"),
+        }
+        for rv in resp.json()
+    ]
+
+
+@router.get("/repos/{owner}/{repo}/pulls/{number}/files")
+async def get_pr_files(owner: str, repo: str, number: int):
+    """List files changed in a pull request."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/pulls/{number}/files")
+    return [
+        {
+            "filename": f["filename"],
+            "status": f["status"],
+            "additions": f["additions"],
+            "deletions": f["deletions"],
+            "patch": f.get("patch", "")[:2000],
+        }
+        for f in resp.json()
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Contributors & compare
+# ---------------------------------------------------------------------------
+
+
+@router.get("/repos/{owner}/{repo}/contributors")
+async def list_contributors(owner: str, repo: str, per_page: int = Query(default=20, ge=1, le=100)):
+    """List contributors sorted by commit count."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/contributors", params={"per_page": per_page})
+    return [
+        {"login": c["login"], "contributions": c["contributions"], "url": c["html_url"]}
+        for c in resp.json()
+    ]
+
+
+@router.get("/repos/{owner}/{repo}/compare")
+async def compare_refs(
+    owner: str,
+    repo: str,
+    base: str = Query(..., description="Base ref (branch, tag, or SHA)."),
+    head: str = Query(..., description="Head ref to compare against base."),
+):
+    """Compare two refs — returns status, commit list, and changed files."""
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/compare/{base}...{head}")
+    d = resp.json()
+    return {
+        "status": d["status"],  # "ahead", "behind", "diverged", "identical"
+        "ahead_by": d["ahead_by"],
+        "behind_by": d["behind_by"],
+        "total_commits": len(d.get("commits", [])),
+        "commits": [
+            {
+                "sha": c["sha"][:7],
+                "message": c["commit"]["message"].splitlines()[0],
+                "author": c["commit"]["author"]["name"],
+                "date": c["commit"]["author"]["date"],
+            }
+            for c in d.get("commits", [])[:20]
+        ],
+        "files_changed": len(d.get("files", [])),
+        "files": [
+            {
+                "filename": f["filename"],
+                "status": f["status"],
+                "additions": f["additions"],
+                "deletions": f["deletions"],
+            }
+            for f in d.get("files", [])[:30]
+        ],
+    }
