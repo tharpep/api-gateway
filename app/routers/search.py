@@ -17,7 +17,6 @@ def _require_key() -> str:
     return settings.tavily_api_key
 
 
-# --- Models ---
 
 class WebSearchRequest(BaseModel):
     query: str
@@ -29,7 +28,6 @@ class FetchUrlRequest(BaseModel):
     url: str
 
 
-# --- Routes ---
 
 @router.post("/web")
 async def web_search(body: WebSearchRequest):

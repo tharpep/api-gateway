@@ -16,7 +16,6 @@ from app.providers.base import (
     ModelInfo,
 )
 
-
 logger = logging.getLogger(__name__)
 router = APIRouter()
 

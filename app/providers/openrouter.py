@@ -1,6 +1,5 @@
 """OpenRouter API provider for multi-model access."""
 
-import json
 import time
 import uuid
 from typing import AsyncIterator
@@ -8,16 +7,16 @@ from typing import AsyncIterator
 import httpx
 
 from app.config import settings
+
 from .base import (
     BaseProvider,
+    ChatCompletionChoice,
     ChatCompletionRequest,
     ChatCompletionResponse,
-    ChatCompletionChoice,
     ChatMessage,
-    UsageInfo,
     ModelInfo,
+    UsageInfo,
 )
-
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 

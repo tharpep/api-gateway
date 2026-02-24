@@ -2,7 +2,6 @@
 
 import asyncio
 import base64
-import logging
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -11,7 +10,6 @@ from pydantic import BaseModel
 from app.config import settings
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
 

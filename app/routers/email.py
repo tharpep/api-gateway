@@ -7,7 +7,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.auth.google import GoogleOAuth, GMAIL_SCOPES, TokenData
+from app.auth.google import GMAIL_SCOPES, GoogleOAuth, TokenData
 from app.config import settings
 
 router = APIRouter()
@@ -70,7 +70,6 @@ def _build_raw_message(
     return base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
 
 
-# --- Models ---
 
 class EmailMessage(BaseModel):
     id: str
@@ -98,7 +97,6 @@ class DraftRequest(BaseModel):
     cc: str | None = None
 
 
-# --- Internal helpers ---
 
 async def _fetch_messages(query: str, max_results: int = 50) -> list[EmailMessage]:
     """Fetch messages matching a Gmail query, returning metadata summaries."""
@@ -157,7 +155,6 @@ async def _fetch_messages(query: str, max_results: int = 50) -> list[EmailMessag
     return messages
 
 
-# --- Routes ---
 
 @router.get("", response_model=EmailResponse)
 async def list_emails(

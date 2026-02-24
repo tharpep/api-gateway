@@ -1,13 +1,16 @@
 """Storage endpoint — Google Drive files."""
 
+import base64
+import io
 import json
 import logging
 import uuid
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
-import httpx
+from pypdf import PdfReader
 
 from app.auth.google import GoogleOAuth, TokenData
 from app.config import settings
@@ -390,8 +393,6 @@ async def _fetch_text_content(
         raise HTTPException(502, f"Drive download error for '{name}': {r.text}")
 
     if mime == _PDF_MIME:
-        import io
-        from pypdf import PdfReader
         try:
             reader = PdfReader(io.BytesIO(r.content))
             text = "\n\n".join(page.extract_text() or "" for page in reader.pages).strip()
@@ -683,9 +684,8 @@ async def copy_github_to_drive(body: CopyFromGithubRequest):
     if data.get("encoding") != "base64":
         raise HTTPException(422, f"Unexpected GitHub encoding: {data.get('encoding')}")
 
-    import base64 as _base64
     try:
-        content = _base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+        content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
     except Exception as e:
         raise HTTPException(422, f"Could not decode file content: {e}")
 

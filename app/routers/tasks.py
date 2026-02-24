@@ -4,7 +4,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.auth.google import GoogleOAuth, TASKS_SCOPES, TokenData
+from app.auth.google import TASKS_SCOPES, GoogleOAuth, TokenData
 from app.config import settings
 
 router = APIRouter()

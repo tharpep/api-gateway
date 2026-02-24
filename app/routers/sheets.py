@@ -6,7 +6,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel
 
-from app.auth.google import GoogleOAuth, SHEETS_SCOPES, TokenData
+from app.auth.google import SHEETS_SCOPES, GoogleOAuth, TokenData
 from app.config import settings
 
 router = APIRouter()
@@ -86,7 +86,6 @@ async def _sheets_request(
     return r.json()
 
 
-# --- Models ---
 
 class SheetTab(BaseModel):
     sheet_id: int
@@ -116,7 +115,6 @@ class AppendRowsRequest(BaseModel):
     value_input_option: str = "USER_ENTERED"
 
 
-# --- Routes ---
 
 @router.post("", status_code=201, response_model=SpreadsheetInfo)
 async def create_spreadsheet(body: CreateSpreadsheetRequest):

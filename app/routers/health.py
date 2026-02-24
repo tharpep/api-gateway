@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 from app.config import settings
 
-
 router = APIRouter(tags=["health"])
 
 _startup_time = datetime.now(timezone.utc)
