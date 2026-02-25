@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.auth.google import GMAIL_SCOPES, GoogleOAuth, TokenData
 from app.config import settings
+from app.errors import parse_google_error
 
 router = APIRouter()
 
@@ -124,7 +125,7 @@ async def _fetch_messages(query: str, max_results: int = 50) -> list[EmailMessag
             )
 
     if response.status_code != 200:
-        raise HTTPException(502, f"Gmail API error: {response.text}")
+        raise HTTPException(502, f"Gmail API error: {parse_google_error(response.text)}")
 
     data = response.json()
     message_ids = [msg["id"] for msg in data.get("messages", [])]
@@ -211,7 +212,7 @@ async def get_message(message_id: str):
     if response.status_code == 404:
         raise HTTPException(404, "Message not found")
     if response.status_code != 200:
-        raise HTTPException(502, f"Gmail API error: {response.text}")
+        raise HTTPException(502, f"Gmail API error: {parse_google_error(response.text)}")
 
     msg_data = response.json()
     hdrs = {h["name"]: h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
@@ -244,7 +245,7 @@ async def create_draft(body: DraftRequest):
         )
 
     if response.status_code not in (200, 201):
-        raise HTTPException(502, f"Gmail API error: {response.text}")
+        raise HTTPException(502, f"Gmail API error: {parse_google_error(response.text)}")
 
     data = response.json()
     return {"id": data.get("id"), "message_id": data.get("message", {}).get("id")}

@@ -4,10 +4,11 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Path
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from app.auth.google import SHEETS_SCOPES, GoogleOAuth, TokenData
 from app.config import settings
+from app.errors import parse_google_error
 
 router = APIRouter()
 
@@ -46,7 +47,7 @@ async def _sheets_get(client: httpx.AsyncClient, path: str, params: dict | None 
             headers={"Authorization": f"Bearer {token}"},
         )
     if r.status_code != 200:
-        raise HTTPException(502, f"Sheets API error: {r.text}")
+        raise HTTPException(502, f"Sheets API error: {parse_google_error(r.text)}")
     return r.json()
 
 
@@ -80,7 +81,7 @@ async def _sheets_request(
         )
         r = await client.send(req)
     if not r.is_success:
-        raise HTTPException(502, f"Sheets API error: {r.text}")
+        raise HTTPException(502, f"Sheets API error: {parse_google_error(r.text)}")
     if r.status_code == 204 or not r.content:
         return {}
     return r.json()
@@ -109,10 +110,28 @@ class WriteValuesRequest(BaseModel):
     values: list[list[Any]]
     value_input_option: str = "USER_ENTERED"  # USER_ENTERED or RAW
 
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_flat_values(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            v = data.get("values")
+            if isinstance(v, list) and v and not isinstance(v[0], list):
+                return {**data, "values": [v]}
+        return data
+
 
 class AppendRowsRequest(BaseModel):
     values: list[list[Any]]
     value_input_option: str = "USER_ENTERED"
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_flat_values(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            v = data.get("values")
+            if isinstance(v, list) and v and not isinstance(v[0], list):
+                return {**data, "values": [v]}
+        return data
 
 
 
@@ -138,7 +157,7 @@ async def create_spreadsheet(body: CreateSpreadsheetRequest):
                 headers={"Authorization": f"Bearer {token}"},
             )
         if resp.status_code not in (200, 201):
-            raise HTTPException(502, f"Sheets API error: {resp.text}")
+            raise HTTPException(502, f"Sheets API error: {parse_google_error(resp.text)}")
 
         data = resp.json()
         spreadsheet_id = data["spreadsheetId"]

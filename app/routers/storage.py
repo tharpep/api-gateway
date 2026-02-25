@@ -14,6 +14,7 @@ from pypdf import PdfReader
 
 from app.auth.google import GoogleOAuth, TokenData
 from app.config import settings
+from app.errors import parse_google_error
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ async def _api_get(client: httpx.AsyncClient, path: str, params: dict) -> dict:
             headers={"Authorization": f"Bearer {token}"},
         )
     if r.status_code != 200:
-        raise HTTPException(502, f"Drive API error: {r.text}")
+        raise HTTPException(502, f"Drive API error: {parse_google_error(r.text)}")
     return r.json()
 
 
@@ -363,7 +364,7 @@ async def create_folder(body: CreateFolderRequest):
                 headers={"Authorization": f"Bearer {token}"},
             )
     if resp.status_code not in (200, 201):
-        raise HTTPException(502, f"Drive folder creation failed: {resp.text}")
+        raise HTTPException(502, f"Drive folder creation failed: {parse_google_error(resp.text)}")
     data = resp.json()
     return {"id": data.get("id"), "name": data.get("name", body.name)}
 
@@ -390,7 +391,7 @@ async def _fetch_text_content(
         token = await _get_access_token()
         r = await client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
     if r.status_code != 200:
-        raise HTTPException(502, f"Drive download error for '{name}': {r.text}")
+        raise HTTPException(502, f"Drive download error for '{name}': {parse_google_error(r.text)}")
 
     if mime == _PDF_MIME:
         try:
@@ -469,7 +470,7 @@ async def _multipart_upload(metadata: dict, content: str, mime_type: str) -> dic
                 headers={"Authorization": f"Bearer {token}", "Content-Type": content_type},
             )
     if resp.status_code not in (200, 201):
-        raise HTTPException(502, f"Drive upload error: {resp.text}")
+        raise HTTPException(502, f"Drive upload error: {parse_google_error(resp.text)}")
     return resp.json()
 
 
@@ -494,7 +495,7 @@ async def _media_upload(file_id: str, content: str, mime_type: str) -> dict:
                 headers={"Authorization": f"Bearer {token}", "Content-Type": mime_type},
             )
     if resp.status_code != 200:
-        raise HTTPException(502, f"Drive upload error: {resp.text}")
+        raise HTTPException(502, f"Drive upload error: {parse_google_error(resp.text)}")
     return resp.json()
 
 
@@ -570,7 +571,7 @@ async def move_file(file_id: str, body: MoveFileRequest):
     if resp.status_code == 404:
         raise HTTPException(404, "File not found")
     if resp.status_code != 200:
-        raise HTTPException(502, f"Drive API error: {resp.text}")
+        raise HTTPException(502, f"Drive API error: {parse_google_error(resp.text)}")
     r = resp.json()
     return DriveFile(
         id=r["id"],
@@ -736,7 +737,7 @@ async def copy_drive_file(file_id: str, body: CopyDriveFileRequest):
     if resp.status_code == 404:
         raise HTTPException(404, "Source file not found.")
     if resp.status_code not in (200, 201):
-        raise HTTPException(502, f"Drive copy error: {resp.text}")
+        raise HTTPException(502, f"Drive copy error: {parse_google_error(resp.text)}")
     r = resp.json()
     return {"id": r.get("id"), "name": r.get("name")}
 
@@ -776,4 +777,4 @@ async def delete_file(file_id: str):
     if resp.status_code == 404:
         raise HTTPException(404, "File not found")
     if resp.status_code not in (200, 204):
-        raise HTTPException(502, f"Drive API error: {resp.text}")
+        raise HTTPException(502, f"Drive API error: {parse_google_error(resp.text)}")

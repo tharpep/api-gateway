@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.auth.google import GoogleOAuth, TokenData
 from app.config import settings
+from app.errors import parse_google_error
 
 router = APIRouter()
 
@@ -77,7 +78,7 @@ async def _fetch_events(time_min: datetime, time_max: datetime) -> list[Calendar
             )
 
     if response.status_code != 200:
-        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+        raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
 
     data = response.json()
     events = []
@@ -208,7 +209,7 @@ async def create_event(body: CreateEventRequest):
         )
 
     if response.status_code not in (200, 201):
-        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+        raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
 
     item = response.json()
     start = item.get("start", {})
@@ -260,7 +261,7 @@ async def update_event(event_id: str, body: UpdateEventRequest):
         )
 
     if response.status_code != 200:
-        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+        raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
 
     item = response.json()
     start = item.get("start", {})
@@ -291,7 +292,7 @@ async def search_events(
             headers={"Authorization": f"Bearer {access_token}"},
         )
     if response.status_code != 200:
-        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+        raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
     events = []
     for item in response.json().get("items", []):
         start = item.get("start", {})
@@ -320,7 +321,7 @@ async def delete_event(event_id: str):
         )
 
     if response.status_code not in (200, 204):
-        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+        raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
 
 
 @router.get("/availability", response_model=AvailabilityResponse)
@@ -354,7 +355,7 @@ async def get_availability(
         )
 
     if response.status_code != 200:
-        raise HTTPException(502, f"Google Calendar API error: {response.text}")
+        raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
 
     data = response.json()
     busy_raw = data.get("calendars", {}).get("primary", {}).get("busy", [])

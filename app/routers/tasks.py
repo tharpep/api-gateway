@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.auth.google import TASKS_SCOPES, GoogleOAuth, TokenData
 from app.config import settings
+from app.errors import parse_google_error
 
 router = APIRouter()
 
@@ -68,7 +69,7 @@ async def _fetch_task_lists() -> list[TaskList]:
             )
 
     if response.status_code != 200:
-        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+        raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
 
     data = response.json()
     task_lists = []
@@ -166,7 +167,7 @@ async def create_task_list(body: TaskListRequest):
         )
 
     if response.status_code not in (200, 201):
-        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+        raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
 
     item = response.json()
     return TaskList(id=item["id"], title=item["title"])
@@ -185,7 +186,7 @@ async def rename_task_list(list_id: str, body: TaskListRequest):
         )
 
     if response.status_code != 200:
-        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+        raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
 
     item = response.json()
     return TaskList(id=item["id"], title=item["title"])
@@ -223,7 +224,7 @@ async def create_task(list_id: str, body: CreateTaskRequest):
         )
 
     if response.status_code not in (200, 201):
-        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+        raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
 
     item = response.json()
     return Task(
@@ -259,7 +260,7 @@ async def update_task(list_id: str, task_id: str, body: UpdateTaskRequest):
         )
 
     if response.status_code != 200:
-        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+        raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
 
     item = response.json()
     return Task(
@@ -284,4 +285,4 @@ async def delete_task(list_id: str, task_id: str):
         )
 
     if response.status_code not in (200, 204):
-        raise HTTPException(502, f"Google Tasks API error: {response.text}")
+        raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
