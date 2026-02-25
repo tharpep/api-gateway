@@ -1,18 +1,32 @@
 # API Gateway
 
-Personal API gateway built with FastAPI. Centralized entry point for notifications, calendar, tasks, email, storage, and AI APIs.
+Personal API gateway built with FastAPI. Centralized proxy for Google APIs, AI providers, and internal services.
+
+## Ecosystem
+
+Part of a personal AI ecosystem — see [sazed](https://github.com/tharpep/sazed) for the full picture.
+
+| Related repo | How it uses this gateway |
+|-------------|--------------------------|
+| [sazed](https://github.com/tharpep/sazed) | All tool calls (calendar, tasks, email, storage, github, sheets, AI, KB) |
+| [knowledge-base](https://github.com/tharpep/knowledge-base) | Drive file access via `/storage`, LLM calls via `/ai` |
+| [automations](https://github.com/tharpep/automations) | Script integrations via `GATEWAY_URL` + `GATEWAY_API_KEY` |
 
 ## Endpoints
 
 | Route | Description | Provider |
 |-------|-------------|----------|
-| `/health` | Gateway status and API directory | - |
+| `/health` | Gateway status | — |
 | `/notify` | Push notifications | Pushover |
-| `/ai` | AI API gateway | Claude, ChatGPT, OpenRouter, DeepSeek |
-| `/calendar` | Calendar events | Google Calendar → Outlook |
-| `/tasks` | Task management | Google Tasks → Todoist |
-| `/email` | Email access and sending | Gmail → Outlook |
-| `/storage` | File and photo storage | Google Drive/Photos → Homelab |
+| `/ai` | AI API proxy (OpenAI-compatible) | Anthropic, OpenRouter |
+| `/calendar` | Calendar CRUD | Google Calendar |
+| `/tasks` | Task management | Google Tasks |
+| `/email` | Email read + draft | Gmail |
+| `/storage` | File storage (Drive KB subfolders) | Google Drive |
+| `/kb` | Knowledge base proxy | knowledge-base service |
+| `/search` | Web search + URL fetch | — |
+| `/github` | GitHub repos, issues, PRs, code | GitHub API |
+| `/sheets` | Google Sheets CRUD | Google Sheets |
 
 ## Setup
 
@@ -29,28 +43,23 @@ poetry run uvicorn app.main:app --reload
 
 ## Authentication
 
-When `API_KEY` is set in the environment, all routes except `/health` and `/docs` require a valid key. Send it via:
+When `API_KEY` is set, all routes except `/health` and `/docs` require a valid key:
 
 - **Header:** `X-API-Key: <your-key>`
 - **Header:** `Authorization: Bearer <your-key>`
 
-If `API_KEY` is empty, no authentication is required (suitable for local dev). For production (e.g. Cloud Run), set `API_KEY` in the service environment or via GCP Secret Manager.
+If `API_KEY` is empty, no authentication is required (local dev).
 
 ## Deployment
 
-Deploys to GCP Cloud Run via Docker.
+Deploys to GCP Cloud Run via Docker on push to `main` (GitHub Actions).
 
 ```bash
-# Build
 docker build -t api-gateway .
-
-# Run locally
 docker run -p 8000:8000 --env-file .env api-gateway
 ```
 
-### CI/CD (GitHub Actions)
-
-Deploys on push to `main`. One-time GCP setup in the Cloud Console: create/select project, enable Cloud Run and Artifact Registry APIs, create Artifact Registry repo `api-gateway` in `us-central1`, create a service account with Cloud Run Admin, Artifact Registry Writer, and Service Account User, create a JSON key and add GitHub secrets `GCP_SA_KEY` and `GCP_PROJECT_ID`. Set the Cloud Run service env vars in the Console after the first deploy (including `API_KEY` for production).
+One-time GCP setup: enable Cloud Run + Artifact Registry, create repo `api-gateway` in `us-central1`, create a service account with Cloud Run Admin + Artifact Registry Writer + Service Account User, add `GCP_SA_KEY` and `GCP_PROJECT_ID` secrets to GitHub. Set Cloud Run env vars in the Console after the first deploy.
 
 ## API Docs
 
