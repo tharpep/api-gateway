@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # Tavily (web search)
     tavily_api_key: str = ""
 
+    # Finance DB (same Neon DB as Sazed — set DATABASE_URL here)
+    database_url: str = ""
+
     # GitHub
     github_token: str = ""
     github_owner: str = "tharpep"  # Default owner for repo-scoped requests

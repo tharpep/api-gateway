@@ -12,6 +12,7 @@ from app.routers import (
     calendar,
     context,
     email,
+    finance,
     github,
     health,
     kb,
@@ -77,5 +78,8 @@ app.include_router(
 )
 app.include_router(
     sheets.router, prefix="/sheets", tags=["sheets"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    finance.router, prefix="/finance", tags=["finance"], dependencies=[Depends(verify_api_key)]
 )
 
