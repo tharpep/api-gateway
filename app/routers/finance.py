@@ -1,7 +1,9 @@
 """Finance router — subscriptions, budget, income, and monthly summary."""
 
+import calendar
 import decimal
 import logging
+from datetime import date, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -51,6 +53,14 @@ CREATE TABLE IF NOT EXISTS transactions (
     source     TEXT DEFAULT 'manual',
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'subscription';
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS variable_amount BOOLEAN DEFAULT FALSE;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS billing_day INTEGER;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS next_billing_date DATE;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE income ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 """
 
 
@@ -68,10 +78,15 @@ async def _get_pool() -> asyncpg.Pool:
 
 
 def _row(rec: asyncpg.Record) -> dict:
-    """Convert asyncpg Record to dict, casting Decimals to float."""
+    """Convert asyncpg Record to dict, casting Decimals to float and dates to ISO strings."""
     out = {}
     for k, v in rec.items():
-        out[k] = float(v) if isinstance(v, decimal.Decimal) else v
+        if isinstance(v, decimal.Decimal):
+            out[k] = float(v)
+        elif isinstance(v, date):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
     return out
 
 
@@ -84,6 +99,10 @@ def _to_monthly(amount: float, frequency: str) -> float:
     }.get(frequency, amount)
 
 
+def _days_in_month(year: int, month: int) -> int:
+    return calendar.monthrange(year, month)[1]
+
+
 # ── Pydantic models ────────────────────────────────────────────────────────
 
 
@@ -92,6 +111,10 @@ class SubscriptionIn(BaseModel):
     amount: float
     frequency: str = "monthly"
     category: str
+    type: str = "subscription"
+    variable_amount: Optional[bool] = None
+    billing_day: Optional[int] = None
+    next_billing_date: Optional[date] = None
     notes: Optional[str] = None
 
 
@@ -100,6 +123,10 @@ class SubscriptionUpdate(BaseModel):
     amount: Optional[float] = None
     frequency: Optional[str] = None
     category: Optional[str] = None
+    type: Optional[str] = None
+    variable_amount: Optional[bool] = None
+    billing_day: Optional[int] = None
+    next_billing_date: Optional[date] = None
     active: Optional[bool] = None
     notes: Optional[str] = None
 
@@ -138,10 +165,13 @@ async def list_subscriptions(include_inactive: bool = Query(default=False, alias
 async def create_subscription(body: SubscriptionIn) -> dict:
     pool = await _get_pool()
     row = await pool.fetchrow(
-        """INSERT INTO subscriptions (name, amount, frequency, category, notes)
-           VALUES ($1, $2, $3, $4, $5)
+        """INSERT INTO subscriptions
+               (name, amount, frequency, category, type, variable_amount, billing_day,
+                next_billing_date, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING *""",
-        body.name, body.amount, body.frequency, body.category, body.notes,
+        body.name, body.amount, body.frequency, body.category, body.type,
+        body.variable_amount or False, body.billing_day, body.next_billing_date, body.notes,
     )
     return _row(row)
 
@@ -152,7 +182,7 @@ async def update_subscription(sub_id: UUID, body: SubscriptionUpdate) -> dict:
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
-    sets = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(fields))
+    sets = "updated_at = NOW(), " + ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(fields))
     row = await pool.fetchrow(
         f"UPDATE subscriptions SET {sets} WHERE id = $1 RETURNING *",
         sub_id, *fields.values(),
@@ -222,7 +252,7 @@ async def update_income(income_id: UUID, body: IncomeUpdate) -> dict:
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
-    sets = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(fields))
+    sets = "updated_at = NOW(), " + ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(fields))
     row = await pool.fetchrow(
         f"UPDATE income SET {sets} WHERE id = $1 RETURNING *",
         income_id, *fields.values(),
@@ -230,6 +260,43 @@ async def update_income(income_id: UUID, body: IncomeUpdate) -> dict:
     if not row:
         raise HTTPException(status_code=404, detail="Not found")
     return _row(row)
+
+
+@router.delete("/income/{income_id}", status_code=204)
+async def delete_income(income_id: UUID) -> None:
+    pool = await _get_pool()
+    await pool.execute("UPDATE income SET active = false WHERE id = $1", income_id)
+
+
+# ── Upcoming bills ──────────────────────────────────────────────────────────
+
+
+@router.get("/upcoming")
+async def upcoming_bills(days: int = Query(default=30, ge=1, le=365)) -> list[dict]:
+    """Return active subscriptions/bills with a known due date within the next N days."""
+    pool = await _get_pool()
+    rows = await pool.fetch("SELECT * FROM subscriptions WHERE active = true")
+    today = date.today()
+    cutoff = today + timedelta(days=days)
+    result = []
+    for r in rows:
+        due: Optional[date] = None
+        if r["billing_day"]:
+            bd = r["billing_day"]
+            # Next occurrence of billing_day starting from today
+            clamped = min(bd, _days_in_month(today.year, today.month))
+            candidate = today.replace(day=clamped)
+            if candidate < today:
+                m = today.month % 12 + 1
+                y = today.year + (1 if today.month == 12 else 0)
+                candidate = date(y, m, min(bd, _days_in_month(y, m)))
+            due = candidate
+        elif r["next_billing_date"]:
+            due = r["next_billing_date"]
+        if due and due <= cutoff:
+            result.append({**_row(r), "due_date": due.isoformat()})
+    result.sort(key=lambda x: x["due_date"])
+    return result
 
 
 # ── Summary ────────────────────────────────────────────────────────────────
