@@ -62,6 +62,12 @@ async def kb_sync(request: Request):
     return await _proxy(request, "POST", "/kb/sync")
 
 
+@router.get("/index")
+async def kb_index(request: Request):
+    """List all active KB sources with summaries (proxied to KB service)."""
+    return await _proxy(request, "GET", "/kb/index")
+
+
 @router.get("/sources")
 async def kb_sources(request: Request):
     """List all tracked KB source files (proxied to KB service)."""
