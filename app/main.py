@@ -17,6 +17,7 @@ from app.routers import (
     health,
     kb,
     notify,
+    places,
     search,
     sheets,
     storage,
@@ -81,5 +82,8 @@ app.include_router(
 )
 app.include_router(
     finance.router, prefix="/finance", tags=["finance"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    places.router, prefix="/places", tags=["places"], dependencies=[Depends(verify_api_key)]
 )
 

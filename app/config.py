@@ -41,5 +41,8 @@ class Settings(BaseSettings):
     github_token: str = ""
     github_owner: str = "tharpep"  # Default owner for repo-scoped requests
 
+    # Google Maps Platform (Places API)
+    google_maps_api_key: str = ""
+
 
 settings = Settings()
