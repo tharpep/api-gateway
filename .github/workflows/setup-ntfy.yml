@@ -6,7 +6,7 @@ name: Setup ntfy user and token
 # GitHub Secrets required:
 #   GCP_SA_KEY          - existing
 #   GCP_PROJECT_ID      - existing
-#   NTFY_ADMIN_PASSWORD - password for the ntfy admin user (set once in GitHub Secrets)
+#   NTFY_ADMIN_PASSWORD - password for the ntfy admin user
 
 on:
   workflow_dispatch:
@@ -40,9 +40,8 @@ jobs:
             -e NTFY_DATABASE_URL \
             -e NTFY_PASSWORD \
             binwiederhier/ntfy:v2.18.0 \
-            user add --role=admin sazed 2>&1 | tee /tmp/user_add.log
-          # Exit 0 whether user was created or already exists
-          grep -qE "user added|user .* already exists" /tmp/user_add.log
+            user add --role=admin tharpep 2>&1 | tee /tmp/user_add.log || true
+          grep -qE "user .* added|user .* already exists" /tmp/user_add.log
 
       - name: Generate access token
         id: token
@@ -52,7 +51,7 @@ jobs:
           OUTPUT=$(docker run --rm \
             -e NTFY_DATABASE_URL \
             binwiederhier/ntfy:v2.18.0 \
-            token add --label=api-gateway sazed)
+            token add --label=api-gateway tharpep)
           echo "output: $OUTPUT"
           TOKEN=$(echo "$OUTPUT" | awk '{print $2}')
           echo "::add-mask::$TOKEN"
