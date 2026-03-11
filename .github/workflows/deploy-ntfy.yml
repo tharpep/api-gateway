@@ -1,0 +1,72 @@
+name: Deploy ntfy to GCP Cloud Run
+
+on:
+  workflow_dispatch:
+
+env:
+  REGION: us-central1
+  SERVICE: ntfy
+  REPOSITORY: ntfy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Ensure ntfy database exists
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          pip install -q psycopg2-binary
+          python - <<'EOF'
+          import os, psycopg2
+          url = os.environ["DATABASE_URL"]
+          # Connect to postgres default db to run CREATE DATABASE
+          admin_url = url.rsplit("/", 1)[0] + "/postgres"
+          # Strip query params for admin connection, re-add sslmode
+          admin_url = admin_url.split("?")[0] + "?sslmode=require"
+          conn = psycopg2.connect(admin_url)
+          conn.autocommit = True
+          cur = conn.cursor()
+          cur.execute("SELECT 1 FROM pg_database WHERE datname='ntfy'")
+          if not cur.fetchone():
+              cur.execute("CREATE DATABASE ntfy")
+              print("Created ntfy database")
+          else:
+              print("ntfy database already exists")
+          conn.close()
+          EOF
+
+      - name: Build and push
+        run: |
+          docker build \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }} \
+            infra/ntfy/
+          docker push \
+            ${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE }} \
+            --image=${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --min-instances=1 \
+            --memory=256Mi \
+            --cpu=1 \
+            --port=8080 \
+            --set-secrets=NTFY_DATABASE_URL=ntfy-database-url:latest

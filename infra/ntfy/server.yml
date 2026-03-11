@@ -1,0 +1,19 @@
+# ntfy server configuration
+# Non-secret settings committed here. Secrets injected via Cloud Run env vars:
+#   NTFY_BASE_URL        - Cloud Run service URL (update after first deploy)
+#   NTFY_DATABASE_URL    - PostgreSQL connection string (ntfy-database-url secret)
+
+listen-http: ":8080"
+behind-proxy: true
+proxy-forwarded-header: "X-Forwarded-For"
+
+# Access control — personal use, no public signup
+auth-default-access: "deny-all"
+enable-login: true
+enable-signup: false
+
+# Message cache
+cache-duration: "12h"
+
+# Web push disabled (self-hosted, no ntfy.sh relay)
+# upstream-base-url intentionally unset
