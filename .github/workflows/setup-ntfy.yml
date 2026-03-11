@@ -1,0 +1,71 @@
+name: Setup ntfy user and token
+
+# Run once after first ntfy deployment to create the admin user and access token.
+# The generated token is written directly to GCP Secret Manager as ntfy-access-token.
+#
+# GitHub Secrets required:
+#   GCP_SA_KEY          - existing
+#   GCP_PROJECT_ID      - existing
+#   NTFY_ADMIN_PASSWORD - password for the ntfy admin user (set once in GitHub Secrets)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Fetch ntfy database URL from Secret Manager
+        id: secrets
+        run: |
+          NTFY_DB_URL=$(gcloud secrets versions access latest --secret=ntfy-database-url)
+          echo "::add-mask::$NTFY_DB_URL"
+          echo "ntfy_db_url=$NTFY_DB_URL" >> $GITHUB_OUTPUT
+
+      - name: Create ntfy admin user (idempotent)
+        env:
+          NTFY_DATABASE_URL: ${{ steps.secrets.outputs.ntfy_db_url }}
+          NTFY_PASSWORD: ${{ secrets.NTFY_ADMIN_PASSWORD }}
+        run: |
+          docker run --rm \
+            -e NTFY_DATABASE_URL \
+            -e NTFY_PASSWORD \
+            binwiederhier/ntfy:v2.18.0 \
+            user add --role=admin sazed 2>&1 | tee /tmp/user_add.log
+          # Exit 0 whether user was created or already exists
+          grep -qE "user added|user .* already exists" /tmp/user_add.log
+
+      - name: Generate access token
+        id: token
+        env:
+          NTFY_DATABASE_URL: ${{ steps.secrets.outputs.ntfy_db_url }}
+        run: |
+          OUTPUT=$(docker run --rm \
+            -e NTFY_DATABASE_URL \
+            binwiederhier/ntfy:v2.18.0 \
+            token add --label=api-gateway sazed)
+          echo "output: $OUTPUT"
+          TOKEN=$(echo "$OUTPUT" | awk '{print $2}')
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Write token to Secret Manager
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          # Create secret if it doesn't exist, otherwise add a new version
+          gcloud secrets describe ntfy-access-token --project=${{ secrets.GCP_PROJECT_ID }} > /dev/null 2>&1 \
+            && echo -n "$TOKEN" | gcloud secrets versions add ntfy-access-token --data-file=- \
+            || gcloud secrets create ntfy-access-token \
+                --project=${{ secrets.GCP_PROJECT_ID }} \
+                --data-file=<(echo -n "$TOKEN")
+          echo "Token stored in Secret Manager as ntfy-access-token"
