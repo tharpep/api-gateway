@@ -57,14 +57,7 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Write token to Secret Manager
-        env:
-          TOKEN: ${{ steps.token.outputs.token }}
+      - name: Confirm token created
         run: |
-          # Create secret if it doesn't exist, otherwise add a new version
-          gcloud secrets describe ntfy-access-token --project=${{ secrets.GCP_PROJECT_ID }} > /dev/null 2>&1 \
-            && echo -n "$TOKEN" | gcloud secrets versions add ntfy-access-token --data-file=- \
-            || gcloud secrets create ntfy-access-token \
-                --project=${{ secrets.GCP_PROJECT_ID }} \
-                --data-file=<(echo -n "$TOKEN")
-          echo "Token stored in Secret Manager as ntfy-access-token"
+          echo "Token created for tharpep. Retrieve it from your ntfy web UI under Account > Tokens,"
+          echo "then add it to GCP Secret Manager as 'ntfy-access-token'."
