@@ -45,4 +45,5 @@ jobs:
             --memory=256Mi \
             --cpu=1 \
             --port=8080 \
+            --set-env-vars=NTFY_BASE_URL=https://ntfy-252332699398.us-central1.run.app \
             --set-secrets=NTFY_DATABASE_URL=ntfy-database-url:latest

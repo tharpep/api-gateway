@@ -15,5 +15,6 @@ enable-signup: false
 # Message cache
 cache-duration: "12h"
 
-# Web push disabled (self-hosted, no ntfy.sh relay)
-# upstream-base-url intentionally unset
+# Required for iOS background push — relays push signal (not content) through ntfy.sh → APNs
+# base-url is injected via NTFY_BASE_URL env var in Cloud Run
+upstream-base-url: "https://ntfy.sh"
