@@ -17,6 +17,9 @@
 #     OPENROUTER_API_KEY → openrouter-api-key
 #     DATABASE_URL → database-url  (same Neon DB as sazed)
 #   Set KB_SERVICE_URL in Cloud Run console or via --set-env-vars (non-secret URL).
+#     REDDIT_CLIENT_ID → reddit-client-id
+#     REDDIT_CLIENT_SECRET → reddit-client-secret
+#     GNEWS_API_KEY → gnews-api-key
 
 name: Deploy to GCP Cloud Run
 
@@ -59,4 +62,4 @@ jobs:
             --region=${{ env.REGION }} \
             --platform=managed \
             --allow-unauthenticated \
-            --set-secrets=API_KEY=api-key:latest,KB_SERVICE_KEY=api-key:latest,PUSHOVER_USER_KEY=pushover-user-key:latest,PUSHOVER_API_TOKEN=pushover-secret-key:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,GOOGLE_REDIRECT_URI=google-redirect-uri:latest,GOOGLE_REFRESH_TOKEN=google-refresh-token:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,TAVILY_API_KEY=tavily-api-key:latest,KB_SERVICE_URL=kb-service-url:latest,GITHUB_TOKEN=github-token:latest,GITHUB_OWNER=github-owner:latest,DATABASE_URL=database-url:latest,GOOGLE_MAPS_API_KEY=google-maps-api-key:latest
+            --set-secrets=API_KEY=api-key:latest,KB_SERVICE_KEY=api-key:latest,PUSHOVER_USER_KEY=pushover-user-key:latest,PUSHOVER_API_TOKEN=pushover-secret-key:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,GOOGLE_REDIRECT_URI=google-redirect-uri:latest,GOOGLE_REFRESH_TOKEN=google-refresh-token:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,TAVILY_API_KEY=tavily-api-key:latest,KB_SERVICE_URL=kb-service-url:latest,GITHUB_TOKEN=github-token:latest,GITHUB_OWNER=github-owner:latest,DATABASE_URL=database-url:latest,GOOGLE_MAPS_API_KEY=google-maps-api-key:latest,REDDIT_CLIENT_ID=reddit-client-id:latest,REDDIT_CLIENT_SECRET=reddit-client-secret:latest,GNEWS_API_KEY=gnews-api-key:latest
