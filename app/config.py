@@ -44,5 +44,12 @@ class Settings(BaseSettings):
     # Google Maps Platform (Places API)
     google_maps_api_key: str = ""
 
+    # Multi-platform search
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    gnews_api_key: str = ""
+    bluesky_identifier: str = ""    # reserved for future authenticated ops; search is public
+    bluesky_app_password: str = ""  # reserved for future authenticated ops
+
 
 settings = Settings()

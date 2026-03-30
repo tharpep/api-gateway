@@ -16,6 +16,7 @@ from app.routers import (
     github,
     health,
     kb,
+    multi_search,
     notify,
     places,
     search,
@@ -85,5 +86,9 @@ app.include_router(
 )
 app.include_router(
     places.router, prefix="/places", tags=["places"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    multi_search.router, prefix="/multi-search", tags=["multi-search"],
+    dependencies=[Depends(verify_api_key)],
 )
 
