@@ -15,6 +15,7 @@ from app.routers import (
     finance,
     github,
     health,
+    journal,
     kb,
     multi_search,
     notify,
@@ -83,6 +84,9 @@ app.include_router(
 )
 app.include_router(
     finance.router, prefix="/finance", tags=["finance"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    journal.router, prefix="/journal", tags=["journal"], dependencies=[Depends(verify_api_key)]
 )
 app.include_router(
     places.router, prefix="/places", tags=["places"], dependencies=[Depends(verify_api_key)]
