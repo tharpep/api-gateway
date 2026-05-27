@@ -28,11 +28,15 @@ No test suite exists yet.
 
 ## Architecture
 
-**Entry point:** `app/main.py` — creates FastAPI app, registers middleware (CORS, rate limiting), and mounts all routers with optional API key auth via `Depends(verify_api_key)`.
+**Entry point:** `app/main.py` — creates FastAPI app, registers middleware (CORS, rate limiting), runs DB migrations on startup via lifespan, and mounts all routers with optional API key auth via `Depends(verify_api_key)`.
 
 **Configuration:** `app/config.py` — single `Settings` class using pydantic-settings, loads from `.env` file. All env vars have empty-string defaults so the app starts without them. Accessed via the `settings` singleton.
 
 **Authentication:** `app/dependencies.py` — `verify_api_key()` accepts `X-API-Key` header or `Authorization: Bearer` token. Auth is **disabled** when `API_KEY` env var is empty (local dev mode). Applied as a dependency on all routers except `/health`.
+
+### Migrations (`app/migrations/`)
+
+Forward-only numbered SQL migrations. Files named `NNN_name.sql` are applied in order on app startup (via the FastAPI lifespan in `main.py`) inside a transaction. A `schema_migrations(version, name, applied_at)` table tracks what's been run. Failures crash startup so Cloud Run keeps the previous revision live instead of running half-applied schema. To add a new change, drop the next numbered SQL file in this directory.
 
 ### AI Provider System (`app/providers/`)
 
@@ -79,6 +83,14 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
   - `GET /kb/stats` — chunk and file counts
   - `DELETE /kb/files/{drive_file_id}` — remove a file from the index
   - `DELETE /kb` — clear entire KB index
+- `journal.py` — daily contributions log backed by Postgres `journal_entries`. Two-level taxonomy: `category` (`career` | `personal`, defaults to `career`) and `subcategory` (free-form, e.g. `eli-lilly`). Schema is owned by `app/migrations/`.
+  - `GET /journal/entries` — list with filters `category`, `subcategory`, `tag`, `q` (ILIKE on title+body), `start_date`, `end_date`, `limit`, `cursor`. Returns `{entries, next_cursor}`. `project=` accepted as deprecated alias for `subcategory`.
+  - `GET /journal/entries/{id}`, `POST /journal/entries`, `PATCH /journal/entries/{id}`, `DELETE /journal/entries/{id}`
+  - `GET /journal/categories` — fixed list `['career', 'personal']`
+  - `GET /journal/subcategories?category=` — distinct subcategory names
+  - `GET /journal/projects` — deprecated alias for `/subcategories`, kept for one release
+  - `GET /journal/summary` — entries grouped by date with stats; takes `category`, `subcategory`, `period` (`week` | `month` | `last_week` | `last_month`), or explicit date range
+  - `GET /journal/export` — markdown or plain text export with the same filters as `/summary`
 
 **Stub / not yet implemented:**
 - `context.py` — `GET /context/now` returns placeholder; aggregated context snapshot not built yet
@@ -92,3 +104,4 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
 - CORS allows `localhost:3000` and `localhost:3001` by default (configurable in settings)
 - Docker uses `PORT` env var (Cloud Run sets 8080), falls back to 8000
 - Google API routers all follow the same pattern: module-level `_cached_token` + `_oauth` singleton, `_get_access_token()` helper that refreshes on expiry, auto-retry once on 401
+- Schema changes go in `app/migrations/` as numbered SQL files; never use lazy `CREATE TABLE` inside a router
