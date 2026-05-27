@@ -1,8 +1,18 @@
-"""Journal router — daily work contributions log with project/tag support."""
+"""Journal router — daily contributions log with category/subcategory/tag support.
 
+Two-level taxonomy:
+- `category`: top-level axis ('career' or 'personal').
+- `subcategory`: free-form sub-axis under a category (e.g. 'eli-lilly').
+
+Cursor pagination is keyed on (entry_date DESC, created_at DESC, id DESC) so a
+cursor uniquely identifies a position even when many entries share a date.
+"""
+
+import base64
 import decimal
+import json
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 import asyncpg
@@ -17,21 +27,7 @@ router = APIRouter()
 
 _pool: asyncpg.Pool | None = None
 
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS journal_entries (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    entry_date  DATE NOT NULL DEFAULT CURRENT_DATE,
-    project     TEXT NOT NULL,
-    title       TEXT NOT NULL,
-    body        TEXT NOT NULL,
-    tags        TEXT[] DEFAULT '{}',
-    created_at  TIMESTAMPTZ DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_journal_date ON journal_entries (entry_date DESC);
-CREATE INDEX IF NOT EXISTS idx_journal_project ON journal_entries (project);
-"""
+CATEGORIES: tuple[str, ...] = ("career", "personal")
 
 
 async def _get_pool() -> asyncpg.Pool:
@@ -41,8 +37,6 @@ async def _get_pool() -> asyncpg.Pool:
             raise HTTPException(status_code=503, detail="Database not configured (DATABASE_URL)")
         dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
         _pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=5)
-        async with _pool.acquire() as conn:
-            await conn.execute(_SCHEMA_SQL)
         logger.info("Journal DB pool ready")
     return _pool
 
@@ -52,6 +46,8 @@ def _row(rec: asyncpg.Record) -> dict:
     for k, v in rec.items():
         if isinstance(v, decimal.Decimal):
             out[k] = float(v)
+        elif isinstance(v, datetime):
+            out[k] = v.isoformat()
         elif isinstance(v, date):
             out[k] = v.isoformat()
         else:
@@ -59,22 +55,39 @@ def _row(rec: asyncpg.Record) -> dict:
     return out
 
 
+def _encode_cursor(entry_date: str, created_at: str, entry_id: str) -> str:
+    raw = json.dumps([entry_date, created_at, entry_id]).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[date, datetime, UUID]:
+    padding = "=" * (-len(cursor) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(cursor + padding)
+        ed_s, ca_s, id_s = json.loads(raw)
+        return date.fromisoformat(ed_s), datetime.fromisoformat(ca_s), UUID(id_s)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid cursor: {e}")
+
+
 # ── Pydantic models ──────────────────────────────────────────────────────
 
 
 class EntryIn(BaseModel):
-    entry_date: date | None = None
-    project: str
+    category: str = "career"
+    subcategory: str
     title: str
     body: str
+    entry_date: date | None = None
     tags: list[str] = []
 
 
 class EntryUpdate(BaseModel):
-    entry_date: date | None = None
-    project: str | None = None
+    category: str | None = None
+    subcategory: str | None = None
     title: str | None = None
     body: str | None = None
+    entry_date: date | None = None
     tags: list[str] | None = None
 
 
@@ -83,24 +96,44 @@ class EntryUpdate(BaseModel):
 
 @router.get("/entries")
 async def list_entries(
-    project: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    subcategory: str | None = Query(default=None),
+    project: str | None = Query(
+        default=None, deprecated=True, description="Alias for subcategory."
+    ),
     tag: str | None = Query(default=None),
+    q: str | None = Query(
+        default=None, description="Case-insensitive text search on title + body."
+    ),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     limit: int = Query(default=30, ge=1, le=200),
-) -> list[dict]:
+    cursor: str | None = Query(
+        default=None, description="Opaque cursor from a previous response."
+    ),
+) -> dict:
     pool = await _get_pool()
+
+    sub = subcategory or project
     conditions: list[str] = []
     params: list = []
     idx = 1
 
-    if project:
-        conditions.append(f"project = ${idx}")
-        params.append(project)
+    if category:
+        conditions.append(f"category = ${idx}")
+        params.append(category)
+        idx += 1
+    if sub:
+        conditions.append(f"subcategory = ${idx}")
+        params.append(sub)
         idx += 1
     if tag:
         conditions.append(f"${idx} = ANY(tags)")
         params.append(tag)
+        idx += 1
+    if q:
+        conditions.append(f"(title ILIKE ${idx} OR body ILIKE ${idx})")
+        params.append(f"%{q}%")
         idx += 1
     if start_date:
         conditions.append(f"entry_date >= ${idx}")
@@ -111,15 +144,36 @@ async def list_entries(
         params.append(end_date)
         idx += 1
 
+    if cursor:
+        c_date, c_created, c_id = _decode_cursor(cursor)
+        conditions.append(
+            f"(entry_date, created_at, id) < (${idx}, ${idx + 1}, ${idx + 2})"
+        )
+        params.extend([c_date, c_created, c_id])
+        idx += 3
+
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
-    params.append(limit)
+    # Ask for limit+1 to know whether another page exists.
+    params.append(limit + 1)
 
     sql = (
         f"SELECT * FROM journal_entries {where} "
-        f"ORDER BY entry_date DESC, created_at DESC LIMIT ${idx}"
+        f"ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT ${idx}"
     )
     rows = await pool.fetch(sql, *params)
-    return [_row(r) for r in rows]
+
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor: str | None = None
+    if has_more and page:
+        last = page[-1]
+        next_cursor = _encode_cursor(
+            last["entry_date"].isoformat(),
+            last["created_at"].isoformat(),
+            str(last["id"]),
+        )
+
+    return {"entries": [_row(r) for r in page], "next_cursor": next_cursor}
 
 
 @router.get("/entries/{entry_id}")
@@ -135,11 +189,13 @@ async def get_entry(entry_id: UUID) -> dict:
 async def create_entry(body: EntryIn) -> dict:
     pool = await _get_pool()
     row = await pool.fetchrow(
-        """INSERT INTO journal_entries (entry_date, project, title, body, tags)
-           VALUES (COALESCE($1, CURRENT_DATE), $2, $3, $4, $5)
+        """INSERT INTO journal_entries
+               (entry_date, category, subcategory, title, body, tags)
+           VALUES (COALESCE($1, CURRENT_DATE), $2, $3, $4, $5, $6)
            RETURNING *""",
         body.entry_date,
-        body.project,
+        body.category,
+        body.subcategory,
         body.title,
         body.body,
         body.tags,
@@ -172,24 +228,42 @@ async def delete_entry(entry_id: UUID) -> None:
         raise HTTPException(status_code=404, detail="Entry not found")
 
 
-# ── Projects ─────────────────────────────────────────────────────────────
+# ── Taxonomy ─────────────────────────────────────────────────────────────
 
 
-@router.get("/projects")
-async def list_projects() -> list[str]:
+@router.get("/categories")
+async def list_categories() -> list[str]:
+    """Return the fixed top-level categories."""
+    return list(CATEGORIES)
+
+
+@router.get("/subcategories")
+async def list_subcategories(category: str | None = Query(default=None)) -> list[str]:
+    """Return distinct subcategory names, optionally filtered by category."""
     pool = await _get_pool()
-    rows = await pool.fetch(
-        "SELECT DISTINCT project FROM journal_entries ORDER BY project"
-    )
-    return [r["project"] for r in rows]
+    if category:
+        rows = await pool.fetch(
+            "SELECT DISTINCT subcategory FROM journal_entries WHERE category = $1 "
+            "ORDER BY subcategory",
+            category,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT DISTINCT subcategory FROM journal_entries ORDER BY subcategory"
+        )
+    return [r["subcategory"] for r in rows]
+
+
+@router.get("/projects", deprecated=True)
+async def list_projects() -> list[str]:
+    """Deprecated alias for /subcategories; kept for one release."""
+    return await list_subcategories(category=None)
 
 
 # ── Summary ──────────────────────────────────────────────────────────────
 
 
-def _default_range(
-    period: str,
-) -> tuple[date, date]:
+def _default_range(period: str) -> tuple[date, date]:
     """Return (start, end) for common period shorthands."""
     today = date.today()
     if period == "week":
@@ -209,7 +283,9 @@ def _default_range(
 
 @router.get("/summary")
 async def journal_summary(
-    project: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    subcategory: str | None = Query(default=None),
+    project: str | None = Query(default=None, deprecated=True),
     period: str | None = Query(
         default=None,
         description="Shorthand: week, month, last_week, last_month.",
@@ -225,14 +301,20 @@ async def journal_summary(
     if not end_date:
         end_date = date.today()
 
+    sub = subcategory or project
     pool = await _get_pool()
     conditions = ["entry_date >= $1", "entry_date <= $2"]
     params: list = [start_date, end_date]
     idx = 3
 
-    if project:
-        conditions.append(f"project = ${idx}")
-        params.append(project)
+    if category:
+        conditions.append(f"category = ${idx}")
+        params.append(category)
+        idx += 1
+    if sub:
+        conditions.append(f"subcategory = ${idx}")
+        params.append(sub)
+        idx += 1
 
     where = "WHERE " + " AND ".join(conditions)
     sql = (
@@ -242,16 +324,16 @@ async def journal_summary(
     rows = await pool.fetch(sql, *params)
     entries = [_row(r) for r in rows]
 
-    # Group by date
     by_date: dict[str, list[dict]] = {}
     for e in entries:
         by_date.setdefault(e["entry_date"], []).append(e)
 
-    # Collect all tags
     all_tags: dict[str, int] = {}
-    all_projects: set[str] = set()
+    all_categories: set[str] = set()
+    all_subs: set[str] = set()
     for e in entries:
-        all_projects.add(e["project"])
+        all_categories.add(e["category"])
+        all_subs.add(e["subcategory"])
         for t in e.get("tags", []):
             all_tags[t] = all_tags.get(t, 0) + 1
 
@@ -259,12 +341,10 @@ async def journal_summary(
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "total_entries": len(entries),
-        "projects": sorted(all_projects),
+        "categories": sorted(all_categories),
+        "subcategories": sorted(all_subs),
         "top_tags": sorted(all_tags.items(), key=lambda x: -x[1])[:10],
-        "days": [
-            {"date": d, "entries": es}
-            for d, es in by_date.items()
-        ],
+        "days": [{"date": d, "entries": es} for d, es in by_date.items()],
     }
 
 
@@ -273,7 +353,9 @@ async def journal_summary(
 
 @router.get("/export", response_class=PlainTextResponse)
 async def export_entries(
-    project: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    subcategory: str | None = Query(default=None),
+    project: str | None = Query(default=None, deprecated=True),
     period: str | None = Query(default=None),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
@@ -287,14 +369,20 @@ async def export_entries(
     if not end_date:
         end_date = date.today()
 
+    sub = subcategory or project
     pool = await _get_pool()
     conditions = ["entry_date >= $1", "entry_date <= $2"]
     params: list = [start_date, end_date]
     idx = 3
 
-    if project:
-        conditions.append(f"project = ${idx}")
-        params.append(project)
+    if category:
+        conditions.append(f"category = ${idx}")
+        params.append(category)
+        idx += 1
+    if sub:
+        conditions.append(f"subcategory = ${idx}")
+        params.append(sub)
+        idx += 1
 
     where = "WHERE " + " AND ".join(conditions)
     sql = (
@@ -310,8 +398,9 @@ async def export_entries(
     md = format == "markdown"
     lines: list[str] = []
     title = f"Journal: {start_date.isoformat()} to {end_date.isoformat()}"
-    if project:
-        title += f" ({project})"
+    scope_bits = [b for b in (category, sub) if b]
+    if scope_bits:
+        title += f" ({' / '.join(scope_bits)})"
     lines.append(f"# {title}" if md else title)
     lines.append("")
 
@@ -331,11 +420,12 @@ async def export_entries(
             else:
                 tags = f" [{', '.join(e['tags'])}]"
 
+        scope = f"{e['category']} / {e['subcategory']}"
         if md:
             lines.append(f"### {e['title']}")
-            lines.append(f"*{e['project']}*{tags}")
+            lines.append(f"*{scope}*{tags}")
         else:
-            lines.append(f"  {e['title']} ({e['project']}){tags}")
+            lines.append(f"  {e['title']} ({scope}){tags}")
 
         lines.append("")
         lines.append(e["body"])

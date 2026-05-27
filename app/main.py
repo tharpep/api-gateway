@@ -1,5 +1,8 @@
 """API Gateway - FastAPI application entry point."""
 
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -7,6 +10,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.dependencies import verify_api_key
+from app.migrations import run_migrations
 from app.routers import (
     ai,
     calendar,
@@ -27,10 +31,27 @@ from app.routers import (
     webhooks,
 )
 
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Run pending migrations before serving traffic. Failures crash startup so
+    # Cloud Run keeps the previous revision live instead of running half-applied
+    # schema.
+    if settings.database_url:
+        dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+        await run_migrations(dsn)
+    else:
+        logger.info("DATABASE_URL not set; skipping migrations")
+    yield
+
+
 app = FastAPI(
     title="API Gateway",
     description="Personal API gateway for centralized service access",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # Rate limiting
