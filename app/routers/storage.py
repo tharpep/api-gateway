@@ -43,18 +43,14 @@ def _is_readable(mime: str) -> bool:
         return True
     return mime.startswith("text/") or mime in {"application/json", "application/xml"}
 
-# Known KB subfolders: lowercase category key → Drive folder name
-_KB_SUBFOLDERS: dict[str, str] = {
-    "general": "General",
-    "projects": "Projects",
-    "purdue": "Purdue",
-    "career": "Career",
-    "reference": "Reference",
-    "conversations": "Conversations",
-}
-
 # Module-level folder ID cache — Drive folder IDs are stable across requests
 _folder_id_cache: dict[str, str] = {}
+
+# KB subfolders are discovered dynamically from Drive (see _list_kb_subfolders) and
+# cached briefly so new folders appear without a restart but repeated calls don't
+# hammer the Drive API.
+_kb_subfolder_cache: dict[str, Any] = {"folders": None, "expires_at": 0.0}
+_KB_SUBFOLDER_CACHE_TTL_SECONDS = 300
 
 _cached_token: TokenData | None = None
 _oauth = GoogleOAuth()
