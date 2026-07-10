@@ -228,8 +228,8 @@ class DriveFilesResponse(BaseModel):
 async def list_kb_files(
     category: str | None = Query(
         default=None,
-        description=f"KB subfolder to list. One of: {', '.join(_KB_SUBFOLDERS)}. "
-                    "Omit to list all subfolders.",
+        description="KB subfolder to list, matched case-insensitively against folder "
+                    "names directly under 'Knowledge Base' in Drive. Omit to list all subfolders.",
     ),
     modified_after: str | None = Query(
         default=None,
@@ -262,32 +262,29 @@ async def list_kb_files(
         ]
         return DriveFilesResponse(files=files, count=len(files))
 
-    # KB subfolder mode
     if category is not None:
         category = category.lower()
-        if category not in _KB_SUBFOLDERS:
-            raise HTTPException(
-                400,
-                f"Unknown category '{category}'. Valid: {', '.join(_KB_SUBFOLDERS)}",
-            )
 
     raw_files: list[dict] = []
 
     async with httpx.AsyncClient() as client:
+        subfolders = await _list_kb_subfolders(client)
         if category:
-            kb_folder_id = await _kb_subfolder_id(client, _KB_SUBFOLDERS[category])
-            raw_files = await _list_files_in_folder(client, kb_folder_id, category, modified_after)
+            match = next((f for f in subfolders if f["name"].lower() == category), None)
+            if match is None:
+                raise HTTPException(
+                    404,
+                    f"Unknown category '{category}'. Available: "
+                    f"{', '.join(f['name'].lower() for f in subfolders)}",
+                )
+            raw_files = await _list_files_in_folder(client, match["id"], category, modified_after)
         else:
-            for cat_key, folder_name in _KB_SUBFOLDERS.items():
-                try:
-                    kb_folder_id = await _kb_subfolder_id(client, folder_name)
-                    kb_files = await _list_files_in_folder(client, kb_folder_id, cat_key, modified_after)
-                    raw_files.extend(kb_files)
-                except HTTPException as e:
-                    if e.status_code == 404:
-                        logger.warning(f"KB subfolder '{folder_name}' not found in Drive, skipping")
-                    else:
-                        raise
+            for folder in subfolders:
+                cat_key = folder["name"].lower()
+                kb_files = await _list_files_in_folder(
+                    client, folder["id"], cat_key, modified_after
+                )
+                raw_files.extend(kb_files)
 
     files = [
         DriveFile(
