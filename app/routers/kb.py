@@ -96,3 +96,21 @@ async def kb_delete_file(drive_file_id: str, request: Request):
 async def kb_clear(request: Request):
     """Clear the entire KB index (proxied to KB service)."""
     return await _proxy(request, "DELETE", "/kb")
+
+
+@router.post("/ingest/text", status_code=201)
+async def kb_ingest_text(request: Request):
+    """Directly ingest text content into the KB, no Drive file required (proxied to KB service)."""
+    return await _proxy(request, "POST", "/kb/ingest/text")
+
+
+@router.post("/ingest/url", status_code=201)
+async def kb_ingest_url(request: Request):
+    """Fetch a URL and ingest its content into the KB (proxied to KB service)."""
+    return await _proxy(request, "POST", "/kb/ingest/url")
+
+
+@router.get("/sources/{file_id}/content")
+async def kb_source_content(file_id: str, request: Request):
+    """Return a KB source's full original text (proxied to KB service)."""
+    return await _proxy(request, "GET", f"/kb/sources/{file_id}/content")
