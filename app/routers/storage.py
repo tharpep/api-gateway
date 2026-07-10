@@ -109,10 +109,31 @@ async def _find_folder_id(
     return folder_id
 
 
-async def _kb_subfolder_id(client: httpx.AsyncClient, subfolder_name: str) -> str:
-    """Resolve 'Knowledge Base → {subfolder_name}' folder ID (cached after first lookup)."""
-    kb_id = await _find_folder_id(client, _KB_ROOT)
-    return await _find_folder_id(client, subfolder_name, parent_id=kb_id)
+async def _list_kb_subfolders(client: httpx.AsyncClient) -> list[dict[str, str]]:
+    """List immediate child folders of 'Knowledge Base', cached briefly.
+
+    Replaces the old hardcoded _KB_SUBFOLDERS map — any folder dropped directly
+    under the KB root becomes a usable category automatically, no code change needed.
+    """
+    now = time.monotonic()
+    cached = _kb_subfolder_cache["folders"]
+    if cached is not None and now < _kb_subfolder_cache["expires_at"]:
+        return cached
+
+    kb_root_id = await _find_folder_id(client, _KB_ROOT)
+    data = await _api_get(
+        client,
+        "files",
+        {
+            "q": f"'{kb_root_id}' in parents and trashed = false and mimeType = '{_FOLDER_MIME}'",
+            "fields": "files(id, name)",
+            "pageSize": 100,
+        },
+    )
+    folders = [{"id": f["id"], "name": f["name"]} for f in data.get("files", [])]
+    _kb_subfolder_cache["folders"] = folders
+    _kb_subfolder_cache["expires_at"] = now + _KB_SUBFOLDER_CACHE_TTL_SECONDS
+    return folders
 
 
 async def _list_files_in_folder(
