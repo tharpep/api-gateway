@@ -71,10 +71,10 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
   - `GET /email/recent`, `GET /email/unread`, `GET /email/search`, `GET /email/messages/{id}`
   - `POST /email/draft`
   - **Missing:** `POST /email/send`, `POST /email/reply/{id}`
-- `storage.py` — Google Drive KB subfolders (General, Projects, Purdue, Career, Reference):
-  - `GET /storage/files` — list files; optional `?category=` filter, each file includes `category` field
+- `storage.py` — Google Drive KB subfolders, discovered dynamically from folders directly under "Knowledge Base" (no hardcoded list — dropping a new Drive folder there makes it a category with no code change):
+  - `GET /storage/files` — list files; optional `?category=` filter (case-insensitive match against subfolder names), each file includes `category` field
   - `GET /storage/files/{file_id}/content` — download file content
-  - Folder IDs are cached in-memory. Missing subfolders are skipped with a warning.
+  - Folder IDs are cached indefinitely; the subfolder list is cached for 5 minutes.
 - `kb.py` — proxy to the knowledge-base service (requires `KB_SERVICE_URL`; optional `KB_SERVICE_KEY`):
   - `POST /kb/search` — hybrid KB search
   - `POST /kb/sync` — trigger Drive → KB sync (optional `force=true`)
