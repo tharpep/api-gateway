@@ -21,6 +21,7 @@ from xml.etree import ElementTree
 import httpx
 
 from app.config import settings
+from app.http_client import get_client
 
 from .models import UnifiedResult
 from .signals import compute_signals
@@ -108,8 +109,9 @@ async def search_hn(
         params["numericFilters"] = f"created_at_i>{int(since_dt.timestamp())}"
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(f"https://hn.algolia.com/api/v1/{endpoint}", params=params)
+        resp = await get_client().get(
+            f"https://hn.algolia.com/api/v1/{endpoint}", params=params, timeout=15.0
+        )
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
@@ -150,8 +152,7 @@ async def search_google_news_rss(
     since_dt = _since_ts(since)
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, follow_redirects=True)
+        resp = await get_client().get(url, follow_redirects=True, timeout=15.0)
         resp.raise_for_status()
         root = ElementTree.fromstring(resp.content)
     except Exception as exc:
@@ -212,11 +213,11 @@ async def search_bluesky(
     since_dt = _since_ts(since)
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts",
-                params=params,
-            )
+        resp = await get_client().get(
+            "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts",
+            params=params,
+            timeout=15.0,
+        )
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
@@ -302,8 +303,9 @@ async def search_gnews(
             pass
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get("https://gnews.io/api/v4/search", params=params)
+        resp = await get_client().get(
+            "https://gnews.io/api/v4/search", params=params, timeout=15.0
+        )
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
@@ -357,6 +359,7 @@ async def _get_reddit_token(client: httpx.AsyncClient) -> str:
             data={"grant_type": "client_credentials"},
             auth=(settings.reddit_client_id, settings.reddit_client_secret),
             headers={"User-Agent": "sazed-search/1.0"},
+            timeout=15.0,
         )
         resp.raise_for_status()
         body = resp.json()
@@ -378,27 +381,28 @@ async def search_reddit(
     since_dt = _since_ts(since)
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            token = await _get_reddit_token(client)
-            base = "https://oauth.reddit.com"
-            path = f"/r/{subreddit}/search.json" if subreddit else "/search.json"
-            params = {
-                "q": query,
-                "sort": sort if sort in ("relevance", "new", "hot", "top") else "relevance",
-                "t": "month",
-                "limit": max_results,
-                "raw_json": 1,
-            }
-            if subreddit:
-                params["restrict_sr"] = 1
-            resp = await client.get(
-                f"{base}{path}",
-                params=params,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "User-Agent": "sazed-search/1.0",
-                },
-            )
+        client = get_client()
+        token = await _get_reddit_token(client)
+        base = "https://oauth.reddit.com"
+        path = f"/r/{subreddit}/search.json" if subreddit else "/search.json"
+        params = {
+            "q": query,
+            "sort": sort if sort in ("relevance", "new", "hot", "top") else "relevance",
+            "t": "month",
+            "limit": max_results,
+            "raw_json": 1,
+        }
+        if subreddit:
+            params["restrict_sr"] = 1
+        resp = await client.get(
+            f"{base}{path}",
+            params=params,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "sazed-search/1.0",
+            },
+            timeout=15.0,
+        )
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
@@ -564,7 +568,7 @@ async def _fetch_one_rss(
     client: httpx.AsyncClient, feed_url: str, query_terms: list[str]
 ) -> list[UnifiedResult]:
     try:
-        resp = await client.get(feed_url, follow_redirects=True)
+        resp = await client.get(feed_url, follow_redirects=True, timeout=10.0)
         resp.raise_for_status()
         return _parse_rss_feed(resp.content, feed_url, query_terms)
     except Exception as exc:
@@ -584,11 +588,10 @@ async def search_custom_rss(
     query_terms = [t.lower() for t in query.split() if len(t) > 2]
     since_dt = _since_ts(since)
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        per_feed = await asyncio.gather(
-            *[_fetch_one_rss(client, url, query_terms) for url in feed_urls],
-            return_exceptions=True,
-        )
+    per_feed = await asyncio.gather(
+        *[_fetch_one_rss(get_client(), url, query_terms) for url in feed_urls],
+        return_exceptions=True,
+    )
 
     all_results: list[UnifiedResult] = []
     for batch in per_feed:
@@ -609,11 +612,11 @@ async def search_custom_rss(
 
 async def fetch_fact_checks(query: str) -> list[dict]:
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://factchecktools.googleapis.com/v1alpha1/claims:search",
-                params={"query": query, "languageCode": "en"},
-            )
+        resp = await get_client().get(
+            "https://factchecktools.googleapis.com/v1alpha1/claims:search",
+            params={"query": query, "languageCode": "en"},
+            timeout=10.0,
+        )
         if not resp.is_success:
             return []
         data = resp.json()

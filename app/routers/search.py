@@ -1,10 +1,10 @@
 """Search endpoint — Tavily web search and URL extraction."""
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import settings
+from app.http_client import get_client
 
 router = APIRouter()
 
@@ -34,16 +34,16 @@ async def web_search(body: WebSearchRequest):
     """Search the web via Tavily. Returns titles, URLs, and pre-extracted content snippets."""
     api_key = _require_key()
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{TAVILY_API}/search",
-            json={
-                "api_key": api_key,
-                "query": body.query,
-                "max_results": body.max_results,
-                "search_depth": body.search_depth,
-            },
-        )
+    response = await get_client().post(
+        f"{TAVILY_API}/search",
+        json={
+            "api_key": api_key,
+            "query": body.query,
+            "max_results": body.max_results,
+            "search_depth": body.search_depth,
+        },
+        timeout=30.0,
+    )
 
     if response.status_code != 200:
         raise HTTPException(502, f"Tavily API error: {response.text}")
@@ -56,14 +56,14 @@ async def fetch_url(body: FetchUrlRequest):
     """Fetch and extract the readable text content from a specific URL via Tavily."""
     api_key = _require_key()
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{TAVILY_API}/extract",
-            json={
-                "api_key": api_key,
-                "urls": [body.url],
-            },
-        )
+    response = await get_client().post(
+        f"{TAVILY_API}/extract",
+        json={
+            "api_key": api_key,
+            "urls": [body.url],
+        },
+        timeout=30.0,
+    )
 
     if response.status_code != 200:
         raise HTTPException(502, f"Tavily API error: {response.text}")

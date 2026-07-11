@@ -4,9 +4,8 @@ import time
 import uuid
 from typing import AsyncIterator
 
-import httpx
-
 from app.config import settings
+from app.http_client import get_client
 
 from .base import (
     BaseProvider,
@@ -52,14 +51,14 @@ class OpenRouterProvider(BaseProvider):
         if request.temperature is not None:
             payload["temperature"] = request.temperature
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                OPENROUTER_API_URL,
-                headers=self._get_headers(),
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
+        response = await get_client().post(
+            OPENROUTER_API_URL,
+            headers=self._get_headers(),
+            json=payload,
+            timeout=60.0,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         choices = []
         for i, choice in enumerate(data.get("choices", [])):
@@ -103,26 +102,26 @@ class OpenRouterProvider(BaseProvider):
         if request.temperature is not None:
             payload["temperature"] = request.temperature
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream(
-                "POST",
-                OPENROUTER_API_URL,
-                headers=self._get_headers(),
-                json=payload,
-            ) as response:
-                response.raise_for_status()
+        async with get_client().stream(
+            "POST",
+            OPENROUTER_API_URL,
+            headers=self._get_headers(),
+            json=payload,
+            timeout=60.0,
+        ) as response:
+            response.raise_for_status()
 
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str == "[DONE]":
-                            yield "data: [DONE]\n\n"
-                            break
-                        yield f"data: {data_str}\n\n"
-                    else:
-                        yield f"{line}\n"
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                if line.startswith("data: "):
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        yield "data: [DONE]\n\n"
+                        break
+                    yield f"data: {data_str}\n\n"
+                else:
+                    yield f"{line}\n"
 
     def get_models(self) -> list[ModelInfo]:
         return [ModelInfo(id=model_id, owned_by=owner) for model_id, owner in OPENROUTER_MODELS]

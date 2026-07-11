@@ -2,12 +2,12 @@
 
 import logging
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import settings
 from app.errors import parse_google_error
+from app.http_client import get_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,12 +62,12 @@ async def search_places(req: PlaceSearchRequest):
             }
         }
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            f"{PLACES_API}/places:searchText",
-            headers=_api_headers(_SEARCH_FIELD_MASK),
-            json=body,
-        )
+    resp = await get_client().post(
+        f"{PLACES_API}/places:searchText",
+        headers=_api_headers(_SEARCH_FIELD_MASK),
+        json=body,
+        timeout=15.0,
+    )
 
     if not resp.is_success:
         raise HTTPException(status_code=502, detail=f"Places API error: {parse_google_error(resp.text)}")
@@ -82,11 +82,11 @@ async def get_place_details(place_id: str):
     """Get full details for a specific place by its Place ID."""
     _check_key()
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(
-            f"{PLACES_API}/places/{place_id}",
-            headers=_api_headers(_DETAILS_FIELD_MASK),
-        )
+    resp = await get_client().get(
+        f"{PLACES_API}/places/{place_id}",
+        headers=_api_headers(_DETAILS_FIELD_MASK),
+        timeout=15.0,
+    )
 
     if not resp.is_success:
         raise HTTPException(status_code=502, detail=f"Places API error: {parse_google_error(resp.text)}")

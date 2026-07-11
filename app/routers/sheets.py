@@ -2,12 +2,12 @@
 
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel, model_validator
 
 from app.auth import token_manager
 from app.errors import parse_google_error
+from app.http_client import get_client
 
 router = APIRouter()
 
@@ -15,10 +15,10 @@ SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets"
 DRIVE_API = "https://www.googleapis.com/drive/v3"
 
 
-async def _sheets_get(client: httpx.AsyncClient, path: str, params: dict | None = None) -> dict:
+async def _sheets_get(path: str, params: dict | None = None) -> dict:
     """Authenticated Sheets API GET — auto-retries once on 401."""
     r = await token_manager.google_request(
-        client, "GET", f"{SHEETS_API}/{path}", params=params or {}
+        get_client(), "GET", f"{SHEETS_API}/{path}", params=params or {}, timeout=30.0
     )
     if r.status_code != 200:
         raise HTTPException(502, f"Sheets API error: {parse_google_error(r.text)}")
@@ -26,7 +26,6 @@ async def _sheets_get(client: httpx.AsyncClient, path: str, params: dict | None 
 
 
 async def _sheets_request(
-    client: httpx.AsyncClient,
     method: str,
     path: str,
     json: dict | None = None,
@@ -34,7 +33,7 @@ async def _sheets_request(
 ) -> dict:
     """Authenticated Sheets API write (POST/PUT/DELETE) — auto-retries once on 401."""
     r = await token_manager.google_request(
-        client, method, f"{SHEETS_API}/{path}", json=json, params=params or {}
+        get_client(), method, f"{SHEETS_API}/{path}", json=json, params=params or {}, timeout=30.0
     )
     if not r.is_success:
         raise HTTPException(502, f"Sheets API error: {parse_google_error(r.text)}")
@@ -94,30 +93,36 @@ class AppendRowsRequest(BaseModel):
 @router.post("", status_code=201, response_model=SpreadsheetInfo)
 async def create_spreadsheet(body: CreateSpreadsheetRequest):
     """Create a new Google Spreadsheet, optionally placed in a specific Drive folder."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Create the spreadsheet via the Sheets API
-        resp = await token_manager.google_request(
-            client, "POST", SHEETS_API, json={"properties": {"title": body.title}}
+    client = get_client()
+
+    # Create the spreadsheet via the Sheets API
+    resp = await token_manager.google_request(
+        client, "POST", SHEETS_API, json={"properties": {"title": body.title}}, timeout=30.0
+    )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(502, f"Sheets API error: {parse_google_error(resp.text)}")
+
+    data = resp.json()
+    spreadsheet_id = data["spreadsheetId"]
+
+    # Move to the requested Drive folder if specified
+    if body.folder_id:
+        # Get current parents first
+        meta_resp = await token_manager.google_request(
+            client,
+            "GET",
+            f"{DRIVE_API}/files/{spreadsheet_id}",
+            params={"fields": "parents"},
+            timeout=30.0,
         )
-        if resp.status_code not in (200, 201):
-            raise HTTPException(502, f"Sheets API error: {parse_google_error(resp.text)}")
-
-        data = resp.json()
-        spreadsheet_id = data["spreadsheetId"]
-
-        # Move to the requested Drive folder if specified
-        if body.folder_id:
-            # Get current parents first
-            meta_resp = await token_manager.google_request(
-                client, "GET", f"{DRIVE_API}/files/{spreadsheet_id}", params={"fields": "parents"}
-            )
-            current_parents = ",".join(meta_resp.json().get("parents", []))
-            await token_manager.google_request(
-                client,
-                "PATCH",
-                f"{DRIVE_API}/files/{spreadsheet_id}",
-                params={"addParents": body.folder_id, "removeParents": current_parents},
-            )
+        current_parents = ",".join(meta_resp.json().get("parents", []))
+        await token_manager.google_request(
+            client,
+            "PATCH",
+            f"{DRIVE_API}/files/{spreadsheet_id}",
+            params={"addParents": body.folder_id, "removeParents": current_parents},
+            timeout=30.0,
+        )
 
     sheets = [
         SheetTab(
@@ -134,12 +139,10 @@ async def create_spreadsheet(body: CreateSpreadsheetRequest):
 @router.get("/{spreadsheet_id}", response_model=SpreadsheetInfo)
 async def get_spreadsheet(spreadsheet_id: str = Path(..., description="The spreadsheet ID.")):
     """Get spreadsheet metadata: title and all sheet tab names, IDs, and dimensions."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        data = await _sheets_get(
-            client,
-            spreadsheet_id,
-            params={"fields": "spreadsheetId,properties.title,sheets.properties"},
-        )
+    data = await _sheets_get(
+        spreadsheet_id,
+        params={"fields": "spreadsheetId,properties.title,sheets.properties"},
+    )
 
     sheets = [
         SheetTab(
@@ -163,11 +166,7 @@ async def read_sheet_values(
     range: str = Path(..., description="A1 notation range, e.g. 'Sheet1!A1:D20' or 'Sheet1'."),
 ):
     """Read cell values from a spreadsheet range. Returns a 2D array of values."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        data = await _sheets_get(
-            client,
-            f"{spreadsheet_id}/values/{range}",
-        )
+    data = await _sheets_get(f"{spreadsheet_id}/values/{range}")
     return {
         "range": data.get("range", range),
         "values": data.get("values", []),
@@ -182,14 +181,12 @@ async def write_sheet_values(
     range: str = Path(..., description="A1 notation range, e.g. 'Sheet1!A1:D5'."),
 ):
     """Overwrite values in a spreadsheet range. Existing values in the range are replaced."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        data = await _sheets_request(
-            client,
-            "PUT",
-            f"{spreadsheet_id}/values/{range}",
-            json={"range": range, "values": body.values, "majorDimension": "ROWS"},
-            params={"valueInputOption": body.value_input_option},
-        )
+    data = await _sheets_request(
+        "PUT",
+        f"{spreadsheet_id}/values/{range}",
+        json={"range": range, "values": body.values, "majorDimension": "ROWS"},
+        params={"valueInputOption": body.value_input_option},
+    )
     return {
         "updated_range": data.get("updatedRange"),
         "updated_rows": data.get("updatedRows"),
@@ -205,17 +202,15 @@ async def append_sheet_rows(
     range: str = Path(..., description="A1 notation range indicating the table to append to, e.g. 'Sheet1!A:D'."),
 ):
     """Append rows to a spreadsheet after the last row of existing data in the range."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        data = await _sheets_request(
-            client,
-            "POST",
-            f"{spreadsheet_id}/values/{range}:append",
-            json={"values": body.values, "majorDimension": "ROWS"},
-            params={
-                "valueInputOption": body.value_input_option,
-                "insertDataOption": "INSERT_ROWS",
-            },
-        )
+    data = await _sheets_request(
+        "POST",
+        f"{spreadsheet_id}/values/{range}:append",
+        json={"values": body.values, "majorDimension": "ROWS"},
+        params={
+            "valueInputOption": body.value_input_option,
+            "insertDataOption": "INSERT_ROWS",
+        },
+    )
     updates = data.get("updates", {})
     return {
         "updated_range": updates.get("updatedRange"),
@@ -230,10 +225,5 @@ async def clear_sheet_range(
     range: str = Path(..., description="A1 notation range to clear, e.g. 'Sheet1!A2:D10'."),
 ):
     """Clear all values in a range (formatting is preserved)."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        data = await _sheets_request(
-            client,
-            "POST",
-            f"{spreadsheet_id}/values/{range}:clear",
-        )
+    data = await _sheets_request("POST", f"{spreadsheet_id}/values/{range}:clear")
     return {"cleared_range": data.get("clearedRange", range)}

@@ -99,7 +99,7 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
 ## Key Conventions
 
 - **Ruff** for linting and formatting: line length 100, target Python 3.11, rules: E, F, I, UP
-- All external API calls use **httpx** async client
+- All external API calls use **httpx**, via one pooled `httpx.AsyncClient` (`app/http_client.py`, opened/closed by the FastAPI lifespan) — call `get_client()` rather than constructing a new client per request
 - Streaming AI responses use **Server-Sent Events** (SSE) format
 - CORS allows `localhost:3000` and `localhost:3001` by default (configurable in settings)
 - Docker uses `PORT` env var (Cloud Run sets 8080), falls back to 8000

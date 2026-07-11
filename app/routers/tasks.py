@@ -1,11 +1,11 @@
 """Tasks endpoint - Google Tasks integration."""
 
-import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.auth import token_manager
 from app.errors import parse_google_error
+from app.http_client import get_client
 
 router = APIRouter()
 
@@ -36,27 +36,27 @@ async def _fetch_task_lists() -> list[TaskList]:
     """Fetch all task lists from Google Tasks API, following pagination until exhausted."""
     items: list[dict] = []
     page_token: str | None = None
+    client = get_client()
 
-    async with httpx.AsyncClient() as client:
-        for _ in range(_MAX_PAGES):
-            params = {"maxResults": 100}
-            if page_token:
-                params["pageToken"] = page_token
+    for _ in range(_MAX_PAGES):
+        params = {"maxResults": 100}
+        if page_token:
+            params["pageToken"] = page_token
 
-            response = await token_manager.google_request(
-                client, "GET", f"{GOOGLE_TASKS_API}/users/@me/lists", params=params
+        response = await token_manager.google_request(
+            client, "GET", f"{GOOGLE_TASKS_API}/users/@me/lists", params=params
+        )
+
+        if response.status_code != 200:
+            raise HTTPException(
+                502, f"Google Tasks API error: {parse_google_error(response.text)}"
             )
 
-            if response.status_code != 200:
-                raise HTTPException(
-                    502, f"Google Tasks API error: {parse_google_error(response.text)}"
-                )
-
-            data = response.json()
-            items.extend(data.get("items", []))
-            page_token = data.get("nextPageToken")
-            if not page_token:
-                break
+        data = response.json()
+        items.extend(data.get("items", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
 
     return [TaskList(id=item["id"], title=item["title"]) for item in items]
 
@@ -65,29 +65,29 @@ async def _fetch_tasks_from_list(list_id: str, list_name: str, include_completed
     """Fetch tasks from a specific list, following pagination until exhausted."""
     items: list[dict] = []
     page_token: str | None = None
+    client = get_client()
 
-    async with httpx.AsyncClient() as client:
-        for _ in range(_MAX_PAGES):
-            params = {
-                "showCompleted": "true" if include_completed else "false",
-                "showHidden": "false",
-                "maxResults": 100,
-            }
-            if page_token:
-                params["pageToken"] = page_token
+    for _ in range(_MAX_PAGES):
+        params = {
+            "showCompleted": "true" if include_completed else "false",
+            "showHidden": "false",
+            "maxResults": 100,
+        }
+        if page_token:
+            params["pageToken"] = page_token
 
-            response = await token_manager.google_request(
-                client, "GET", f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks", params=params
-            )
+        response = await token_manager.google_request(
+            client, "GET", f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks", params=params
+        )
 
-            if response.status_code != 200:
-                return []
+        if response.status_code != 200:
+            return []
 
-            data = response.json()
-            items.extend(data.get("items", []))
-            page_token = data.get("nextPageToken")
-            if not page_token:
-                break
+        data = response.json()
+        items.extend(data.get("items", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
 
     return [
         Task(
@@ -111,10 +111,9 @@ async def get_task_lists():
 
 async def _fetch_task_list_title(list_id: str) -> str:
     """Fetch a task list's title by ID. Falls back to list_id on failure."""
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client, "GET", f"{GOOGLE_TASKS_API}/users/@me/lists/{list_id}"
-        )
+    response = await token_manager.google_request(
+        get_client(), "GET", f"{GOOGLE_TASKS_API}/users/@me/lists/{list_id}"
+    )
     if response.status_code == 200:
         return response.json().get("title", list_id)
     return list_id
@@ -135,10 +134,9 @@ class TaskListRequest(BaseModel):
 @router.post("/lists", status_code=201)
 async def create_task_list(body: TaskListRequest):
     """Create a new task list."""
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client, "POST", f"{GOOGLE_TASKS_API}/users/@me/lists", json={"title": body.title}
-        )
+    response = await token_manager.google_request(
+        get_client(), "POST", f"{GOOGLE_TASKS_API}/users/@me/lists", json={"title": body.title}
+    )
 
     if response.status_code not in (200, 201):
         raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
@@ -150,13 +148,12 @@ async def create_task_list(body: TaskListRequest):
 @router.patch("/lists/{list_id}")
 async def rename_task_list(list_id: str, body: TaskListRequest):
     """Rename an existing task list."""
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client,
-            "PATCH",
-            f"{GOOGLE_TASKS_API}/users/@me/lists/{list_id}",
-            json={"title": body.title},
-        )
+    response = await token_manager.google_request(
+        get_client(),
+        "PATCH",
+        f"{GOOGLE_TASKS_API}/users/@me/lists/{list_id}",
+        json={"title": body.title},
+    )
 
     if response.status_code != 200:
         raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
@@ -187,10 +184,9 @@ async def create_task(list_id: str, body: CreateTaskRequest):
     if body.due:
         payload["due"] = body.due
 
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client, "POST", f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks", json=payload
-        )
+    response = await token_manager.google_request(
+        get_client(), "POST", f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks", json=payload
+    )
 
     if response.status_code not in (200, 201):
         raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
@@ -219,13 +215,12 @@ async def update_task(list_id: str, task_id: str, body: UpdateTaskRequest):
     if body.status is not None:
         payload["status"] = body.status
 
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client,
-            "PATCH",
-            f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks/{task_id}",
-            json=payload,
-        )
+    response = await token_manager.google_request(
+        get_client(),
+        "PATCH",
+        f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks/{task_id}",
+        json=payload,
+    )
 
     if response.status_code != 200:
         raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
@@ -244,10 +239,9 @@ async def update_task(list_id: str, task_id: str, body: UpdateTaskRequest):
 @router.delete("/lists/{list_id}/tasks/{task_id}", status_code=204)
 async def delete_task(list_id: str, task_id: str):
     """Delete a task."""
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client, "DELETE", f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks/{task_id}"
-        )
+    response = await token_manager.google_request(
+        get_client(), "DELETE", f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks/{task_id}"
+    )
 
     if response.status_code not in (200, 204):
         raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")

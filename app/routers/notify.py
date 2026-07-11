@@ -1,10 +1,10 @@
 from enum import IntEnum
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.http_client import get_client
 
 router = APIRouter()
 
@@ -58,8 +58,7 @@ async def send_notification(notification: NotificationRequest):
         payload["retry"] = 60       # Retry every 60 seconds
         payload["expire"] = 3600   
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(PUSHOVER_API_URL, data=payload)
+    response = await get_client().post(PUSHOVER_API_URL, data=payload)
 
     if response.status_code != 200:
         raise HTTPException(

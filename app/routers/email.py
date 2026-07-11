@@ -3,12 +3,12 @@
 import base64
 from email.mime.text import MIMEText
 
-import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.auth import token_manager
 from app.errors import parse_google_error
+from app.http_client import get_client
 
 router = APIRouter()
 
@@ -86,40 +86,40 @@ class DraftRequest(BaseModel):
 async def _fetch_messages(query: str, max_results: int = 50) -> list[EmailMessage]:
     """Fetch messages matching a Gmail query, returning metadata summaries."""
     params = {"q": query, "maxResults": max_results}
+    client = get_client()
 
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client, "GET", f"{GMAIL_API}/users/me/messages", params=params
+    response = await token_manager.google_request(
+        client, "GET", f"{GMAIL_API}/users/me/messages", params=params
+    )
+
+    if response.status_code != 200:
+        raise HTTPException(502, f"Gmail API error: {parse_google_error(response.text)}")
+
+    data = response.json()
+    message_ids = [msg["id"] for msg in data.get("messages", [])]
+
+    if not message_ids:
+        return []
+
+    messages = []
+    for msg_id in message_ids:
+        msg_response = await token_manager.google_request(
+            client,
+            "GET",
+            f"{GMAIL_API}/users/me/messages/{msg_id}",
+            params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]},
         )
 
-        if response.status_code != 200:
-            raise HTTPException(502, f"Gmail API error: {parse_google_error(response.text)}")
-
-        data = response.json()
-        message_ids = [msg["id"] for msg in data.get("messages", [])]
-
-        if not message_ids:
-            return []
-
-        messages = []
-        for msg_id in message_ids:
-            msg_response = await token_manager.google_request(
-                client,
-                "GET",
-                f"{GMAIL_API}/users/me/messages/{msg_id}",
-                params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]},
-            )
-
-            if msg_response.status_code == 200:
-                msg_data = msg_response.json()
-                hdrs = {h["name"]: h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
-                messages.append(EmailMessage(
-                    id=msg_data["id"],
-                    subject=hdrs.get("Subject", "(No subject)"),
-                    sender=hdrs.get("From", "(Unknown sender)"),
-                    snippet=msg_data.get("snippet", ""),
-                    date=hdrs.get("Date", ""),
-                ))
+        if msg_response.status_code == 200:
+            msg_data = msg_response.json()
+            hdrs = {h["name"]: h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
+            messages.append(EmailMessage(
+                id=msg_data["id"],
+                subject=hdrs.get("Subject", "(No subject)"),
+                sender=hdrs.get("From", "(Unknown sender)"),
+                snippet=msg_data.get("snippet", ""),
+                date=hdrs.get("Date", ""),
+            ))
 
     return messages
 
@@ -168,13 +168,12 @@ async def search_email(
 @router.get("/messages/{message_id}", response_model=EmailMessageDetail)
 async def get_message(message_id: str):
     """Get a specific message with full decoded body."""
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client,
-            "GET",
-            f"{GMAIL_API}/users/me/messages/{message_id}",
-            params={"format": "full"},
-        )
+    response = await token_manager.google_request(
+        get_client(),
+        "GET",
+        f"{GMAIL_API}/users/me/messages/{message_id}",
+        params={"format": "full"},
+    )
 
     if response.status_code == 404:
         raise HTTPException(404, "Message not found")
@@ -202,10 +201,9 @@ async def create_draft(body: DraftRequest):
     """Save an email as a draft."""
     raw = _build_raw_message(body.to, body.subject, body.body, body.cc)
 
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client, "POST", f"{GMAIL_API}/users/me/drafts", json={"message": {"raw": raw}}
-        )
+    response = await token_manager.google_request(
+        get_client(), "POST", f"{GMAIL_API}/users/me/drafts", json={"message": {"raw": raw}}
+    )
 
     if response.status_code not in (200, 201):
         raise HTTPException(502, f"Gmail API error: {parse_google_error(response.text)}")

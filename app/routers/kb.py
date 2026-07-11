@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from app.config import settings
+from app.http_client import get_client
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -30,14 +31,17 @@ async def _proxy(request: Request, method: str, path: str) -> Response:
     body = await request.body()
     params = dict(request.query_params)
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            r = await client.request(
-                method,
-                url,
-                content=body,
-                params=params,
-                headers={**_kb_headers(), "content-type": request.headers.get("content-type", "application/json")},
-            )
+        r = await get_client().request(
+            method,
+            url,
+            content=body,
+            params=params,
+            headers={
+                **_kb_headers(),
+                "content-type": request.headers.get("content-type", "application/json"),
+            },
+            timeout=_TIMEOUT,
+        )
     except httpx.ConnectError:
         raise HTTPException(503, "KB service unreachable")
     except httpx.TimeoutException:
