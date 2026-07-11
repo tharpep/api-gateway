@@ -15,6 +15,7 @@ router = APIRouter()
 
 GOOGLE_CALENDAR_API = "https://www.googleapis.com/calendar/v3"
 DEFAULT_TIMEZONE = "America/New_York"
+_MAX_PAGES = 20
 
 _cached_token: TokenData | None = None
 _oauth = GoogleOAuth()
@@ -47,43 +48,57 @@ class CalendarResponse(BaseModel):
 
 
 async def _fetch_events(time_min: datetime, time_max: datetime) -> list[CalendarEvent]:
-    """Fetch events from Google Calendar API."""
+    """Fetch events from Google Calendar API, following pagination until exhausted."""
     access_token = await _get_access_token()
 
-    params = {
+    base_params = {
         "timeMin": time_min.isoformat(),
         "timeMax": time_max.isoformat(),
         "singleEvents": "true",
         "orderBy": "startTime",
-        "maxResults": 50,
+        "maxResults": 250,
     }
 
+    items: list[dict] = []
+    page_token: str | None = None
+
     async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
-            params=params,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+        for _ in range(_MAX_PAGES):
+            params = dict(base_params)
+            if page_token:
+                params["pageToken"] = page_token
 
-    if response.status_code == 401:
-        global _cached_token
-        _cached_token = None
-        access_token = await _get_access_token()
-
-        async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
                 params=params,
                 headers={"Authorization": f"Bearer {access_token}"},
             )
 
-    if response.status_code != 200:
-        raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
+            if response.status_code == 401:
+                global _cached_token
+                _cached_token = None
+                access_token = await _get_access_token()
 
-    data = response.json()
+                response = await client.get(
+                    f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
+                    params=params,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    502, f"Google Calendar API error: {parse_google_error(response.text)}"
+                )
+
+            data = response.json()
+            items.extend(data.get("items", []))
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
     events = []
 
-    for item in data.get("items", []):
+    for item in items:
         start = item.get("start", {})
         end = item.get("end", {})
 

@@ -11,6 +11,7 @@ from app.errors import parse_google_error
 router = APIRouter()
 
 GOOGLE_TASKS_API = "https://tasks.googleapis.com/tasks/v1"
+_MAX_PAGES = 20
 
 _cached_token: TokenData | None = None
 _oauth = GoogleOAuth(scopes=TASKS_SCOPES)
@@ -48,78 +49,92 @@ class TasksResponse(BaseModel):
 
 
 async def _fetch_task_lists() -> list[TaskList]:
-    """Fetch all task lists from Google Tasks API."""
+    """Fetch all task lists from Google Tasks API, following pagination until exhausted."""
     access_token = await _get_access_token()
 
+    items: list[dict] = []
+    page_token: str | None = None
+
     async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{GOOGLE_TASKS_API}/users/@me/lists",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+        for _ in range(_MAX_PAGES):
+            params = {"maxResults": 100}
+            if page_token:
+                params["pageToken"] = page_token
 
-    if response.status_code == 401:
-        global _cached_token
-        _cached_token = None
-        access_token = await _get_access_token()
-
-        async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{GOOGLE_TASKS_API}/users/@me/lists",
+                params=params,
                 headers={"Authorization": f"Bearer {access_token}"},
             )
 
-    if response.status_code != 200:
-        raise HTTPException(502, f"Google Tasks API error: {parse_google_error(response.text)}")
+            if response.status_code == 401:
+                global _cached_token
+                _cached_token = None
+                access_token = await _get_access_token()
 
-    data = response.json()
-    task_lists = []
+                response = await client.get(
+                    f"{GOOGLE_TASKS_API}/users/@me/lists",
+                    params=params,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
 
-    for item in data.get("items", []):
-        task_lists.append(
-            TaskList(
-                id=item["id"],
-                title=item["title"],
-            )
-        )
+            if response.status_code != 200:
+                raise HTTPException(
+                    502, f"Google Tasks API error: {parse_google_error(response.text)}"
+                )
 
-    return task_lists
+            data = response.json()
+            items.extend(data.get("items", []))
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+    return [TaskList(id=item["id"], title=item["title"]) for item in items]
 
 
 async def _fetch_tasks_from_list(list_id: str, list_name: str, include_completed: bool = False) -> list[Task]:
-    """Fetch tasks from a specific list."""
+    """Fetch tasks from a specific list, following pagination until exhausted."""
     access_token = await _get_access_token()
 
-    params = {
-        "showCompleted": "true" if include_completed else "false",
-        "showHidden": "false",
-    }
+    items: list[dict] = []
+    page_token: str | None = None
 
     async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks",
-            params=params,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+        for _ in range(_MAX_PAGES):
+            params = {
+                "showCompleted": "true" if include_completed else "false",
+                "showHidden": "false",
+                "maxResults": 100,
+            }
+            if page_token:
+                params["pageToken"] = page_token
 
-    if response.status_code != 200:
-        return []
-
-    data = response.json()
-    tasks = []
-
-    for item in data.get("items", []):
-        tasks.append(
-            Task(
-                id=item["id"],
-                title=item.get("title", "(No title)"),
-                status=item.get("status", "needsAction"),
-                due=item.get("due"),
-                notes=item.get("notes"),
-                list_name=list_name,
+            response = await client.get(
+                f"{GOOGLE_TASKS_API}/lists/{list_id}/tasks",
+                params=params,
+                headers={"Authorization": f"Bearer {access_token}"},
             )
-        )
 
-    return tasks
+            if response.status_code != 200:
+                return []
+
+            data = response.json()
+            items.extend(data.get("items", []))
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+    return [
+        Task(
+            id=item["id"],
+            title=item.get("title", "(No title)"),
+            status=item.get("status", "needsAction"),
+            due=item.get("due"),
+            notes=item.get("notes"),
+            list_name=list_name,
+        )
+        for item in items
+    ]
 
 
 @router.get("/lists")

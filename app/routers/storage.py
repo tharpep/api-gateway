@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 DRIVE_API = "https://www.googleapis.com/drive/v3"
 _KB_ROOT = "Knowledge Base"
+_MAX_PAGES = 20
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 _EXPORT_MIMES = {
     "application/vnd.google-apps.document": "text/plain",
@@ -88,6 +89,29 @@ async def _api_get(client: httpx.AsyncClient, path: str, params: dict) -> dict:
     return r.json()
 
 
+async def _api_get_all_files(client: httpx.AsyncClient, path: str, params: dict) -> list[dict]:
+    """Authenticated Drive API GET, following nextPageToken until exhausted.
+
+    Merges the `files` array across all pages. Use for listings that must not
+    silently truncate (e.g. KB folder scans) — as opposed to `_api_get`, which
+    a caller can use directly when it only wants a single bounded page.
+    """
+    items: list[dict] = []
+    page_token: str | None = None
+
+    for _ in range(_MAX_PAGES):
+        page_params = dict(params)
+        if page_token:
+            page_params["pageToken"] = page_token
+        data = await _api_get(client, path, page_params)
+        items.extend(data.get("files", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    return items
+
+
 async def _find_folder_id(
     client: httpx.AsyncClient, name: str, parent_id: str | None = None
 ) -> str:
@@ -121,16 +145,16 @@ async def _list_kb_subfolders(client: httpx.AsyncClient) -> list[dict[str, str]]
         return cached
 
     kb_root_id = await _find_folder_id(client, _KB_ROOT)
-    data = await _api_get(
+    raw_files = await _api_get_all_files(
         client,
         "files",
         {
             "q": f"'{kb_root_id}' in parents and trashed = false and mimeType = '{_FOLDER_MIME}'",
-            "fields": "files(id, name)",
+            "fields": "files(id, name), nextPageToken",
             "pageSize": 100,
         },
     )
-    folders = [{"id": f["id"], "name": f["name"]} for f in data.get("files", [])]
+    folders = [{"id": f["id"], "name": f["name"]} for f in raw_files]
     _kb_subfolder_cache["folders"] = folders
     _kb_subfolder_cache["expires_at"] = now + _KB_SUBFOLDER_CACHE_TTL_SECONDS
     return folders
@@ -157,30 +181,30 @@ async def _list_files_in_folder(
         file_q = f"'{current_id}' in parents and trashed = false and mimeType != '{_FOLDER_MIME}'"
         if modified_after:
             file_q += f" and modifiedTime > '{modified_after}'"
-        file_data = await _api_get(
+        files = await _api_get_all_files(
             client,
             "files",
             {
                 "q": file_q,
-                "fields": "files(id, name, mimeType, modifiedTime, size)",
+                "fields": "files(id, name, mimeType, modifiedTime, size), nextPageToken",
                 "pageSize": 100,
                 "orderBy": "modifiedTime desc",
             },
         )
-        collected.extend({**f, "category": category} for f in file_data.get("files", []))
+        collected.extend({**f, "category": category} for f in files)
 
         # Fetch subfolders in this folder and enqueue them
         folder_q = f"'{current_id}' in parents and trashed = false and mimeType = '{_FOLDER_MIME}'"
-        folder_data = await _api_get(
+        subfolders = await _api_get_all_files(
             client,
             "files",
             {
                 "q": folder_q,
-                "fields": "files(id)",
+                "fields": "files(id), nextPageToken",
                 "pageSize": 100,
             },
         )
-        queue.extend(f["id"] for f in folder_data.get("files", []))
+        queue.extend(f["id"] for f in subfolders)
 
     return collected
 
