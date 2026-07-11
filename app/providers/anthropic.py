@@ -5,9 +5,8 @@ import time
 import uuid
 from typing import AsyncIterator
 
-import httpx
-
 from app.config import settings
+from app.http_client import get_client
 
 from .base import (
     BaseProvider,
@@ -72,14 +71,14 @@ class AnthropicProvider(BaseProvider):
         if request.temperature is not None:
             payload["temperature"] = request.temperature
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                ANTHROPIC_API_URL,
-                headers=self._get_headers(),
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
+        response = await get_client().post(
+            ANTHROPIC_API_URL,
+            headers=self._get_headers(),
+            json=payload,
+            timeout=60.0,
+        )
+        response.raise_for_status()
+        data = response.json()
 
         content = ""
         if data.get("content") and len(data["content"]) > 0:
@@ -125,47 +124,33 @@ class AnthropicProvider(BaseProvider):
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream(
-                "POST",
-                ANTHROPIC_API_URL,
-                headers=self._get_headers(),
-                json=payload,
-            ) as response:
-                response.raise_for_status()
+        async with get_client().stream(
+            "POST",
+            ANTHROPIC_API_URL,
+            headers=self._get_headers(),
+            json=payload,
+            timeout=60.0,
+        ) as response:
+            response.raise_for_status()
 
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
 
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        yield "data: [DONE]\n\n"
-                        break
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    yield "data: [DONE]\n\n"
+                    break
 
-                    try:
-                        event = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
+                try:
+                    event = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
 
-                    if event.get("type") == "content_block_delta":
-                        delta = event.get("delta", {})
-                        if delta.get("type") == "text_delta":
-                            text = delta.get("text", "")
-                            chunk = {
-                                "id": completion_id,
-                                "object": "chat.completion.chunk",
-                                "created": created,
-                                "model": request.model,
-                                "choices": [{
-                                    "index": 0,
-                                    "delta": {"content": text},
-                                    "finish_reason": None,
-                                }],
-                            }
-                            yield f"data: {json.dumps(chunk)}\n\n"
-
-                    elif event.get("type") == "message_stop":
+                if event.get("type") == "content_block_delta":
+                    delta = event.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        text = delta.get("text", "")
                         chunk = {
                             "id": completion_id,
                             "object": "chat.completion.chunk",
@@ -173,12 +158,26 @@ class AnthropicProvider(BaseProvider):
                             "model": request.model,
                             "choices": [{
                                 "index": 0,
-                                "delta": {},
-                                "finish_reason": "stop",
+                                "delta": {"content": text},
+                                "finish_reason": None,
                             }],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
-                        yield "data: [DONE]\n\n"
+
+                elif event.get("type") == "message_stop":
+                    chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": request.model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "stop",
+                        }],
+                    }
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    yield "data: [DONE]\n\n"
 
     def get_models(self) -> list[ModelInfo]:
         return [ModelInfo(id=model, owned_by="anthropic") for model in CLAUDE_MODELS]

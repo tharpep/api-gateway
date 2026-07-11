@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.config import settings
+from app.http_client import get_client
 
 router = APIRouter()
 
@@ -31,10 +32,9 @@ def _owner(owner: str | None) -> str:
 
 async def _gh(method: str, path: str, **kwargs) -> httpx.Response:
     """Make an authenticated GitHub API request."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.request(
-            method, f"{GITHUB_API}{path}", headers=_headers(), **kwargs
-        )
+    resp = await get_client().request(
+        method, f"{GITHUB_API}{path}", headers=_headers(), timeout=30.0, **kwargs
+    )
     if resp.status_code == 404:
         raise HTTPException(404, f"GitHub resource not found: {path}")
     if resp.status_code == 422:

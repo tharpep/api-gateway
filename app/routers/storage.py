@@ -17,6 +17,7 @@ from pypdf import PdfReader
 from app.auth import token_manager
 from app.config import settings
 from app.errors import parse_google_error
+from app.http_client import get_client
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -53,9 +54,11 @@ _folder_id_cache: dict[str, str] = {}
 _kb_subfolder_cache: dict[str, Any] = {"folders": None, "expires_at": 0.0}
 _KB_SUBFOLDER_CACHE_TTL_SECONDS = 300
 
-async def _api_get(client: httpx.AsyncClient, path: str, params: dict) -> dict:
+async def _api_get(client: httpx.AsyncClient, path: str, params: dict, **kwargs) -> dict:
     """Authenticated Drive API GET — auto-retries once on 401."""
-    r = await token_manager.google_request(client, "GET", f"{DRIVE_API}/{path}", params=params)
+    r = await token_manager.google_request(
+        client, "GET", f"{DRIVE_API}/{path}", params=params, **kwargs
+    )
     if r.status_code != 200:
         raise HTTPException(502, f"Drive API error: {parse_google_error(r.text)}")
     return r.json()
@@ -244,8 +247,7 @@ async def list_kb_files(
     """List Drive files. Use folder_id/query for general search, or category for KB subfolders."""
     # General Drive search mode
     if folder_id is not None or query is not None:
-        async with httpx.AsyncClient() as client:
-            raw = await _list_files_general(client, folder_id, query, max_results)
+        raw = await _list_files_general(get_client(), folder_id, query, max_results)
         files = [
             DriveFile(
                 id=f["id"],
@@ -263,24 +265,24 @@ async def list_kb_files(
 
     raw_files: list[dict] = []
 
-    async with httpx.AsyncClient() as client:
-        subfolders = await _list_kb_subfolders(client)
-        if category:
-            match = next((f for f in subfolders if f["name"].lower() == category), None)
-            if match is None:
-                raise HTTPException(
-                    404,
-                    f"Unknown category '{category}'. Available: "
-                    f"{', '.join(f['name'].lower() for f in subfolders)}",
-                )
-            raw_files = await _list_files_in_folder(client, match["id"], category, modified_after)
-        else:
-            for folder in subfolders:
-                cat_key = folder["name"].lower()
-                kb_files = await _list_files_in_folder(
-                    client, folder["id"], cat_key, modified_after
-                )
-                raw_files.extend(kb_files)
+    client = get_client()
+    subfolders = await _list_kb_subfolders(client)
+    if category:
+        match = next((f for f in subfolders if f["name"].lower() == category), None)
+        if match is None:
+            raise HTTPException(
+                404,
+                f"Unknown category '{category}'. Available: "
+                f"{', '.join(f['name'].lower() for f in subfolders)}",
+            )
+        raw_files = await _list_files_in_folder(client, match["id"], category, modified_after)
+    else:
+        for folder in subfolders:
+            cat_key = folder["name"].lower()
+            kb_files = await _list_files_in_folder(
+                client, folder["id"], cat_key, modified_after
+            )
+            raw_files.extend(kb_files)
 
     files = [
         DriveFile(
@@ -326,17 +328,16 @@ async def list_folders(
         q_parts.append(f"'{parent_id}' in parents")
     if query:
         q_parts.append(f"({query})")
-    async with httpx.AsyncClient() as client:
-        data = await _api_get(
-            client,
-            "files",
-            {
-                "q": " and ".join(q_parts),
-                "fields": "files(id, name, parents)",
-                "pageSize": max_results,
-                "orderBy": "name",
-            },
-        )
+    data = await _api_get(
+        get_client(),
+        "files",
+        {
+            "q": " and ".join(q_parts),
+            "fields": "files(id, name, parents)",
+            "pageSize": max_results,
+            "orderBy": "name",
+        },
+    )
     folders = [
         DriveFolder(
             id=f["id"],
@@ -359,10 +360,9 @@ async def create_folder(body: CreateFolderRequest):
     metadata: dict = {"name": body.name, "mimeType": _FOLDER_MIME}
     if body.parent_id:
         metadata["parents"] = [body.parent_id]
-    async with httpx.AsyncClient() as client:
-        resp = await token_manager.google_request(
-            client, "POST", f"{DRIVE_API}/files", json=metadata
-        )
+    resp = await token_manager.google_request(
+        get_client(), "POST", f"{DRIVE_API}/files", json=metadata
+    )
     if resp.status_code not in (200, 201):
         raise HTTPException(502, f"Drive folder creation failed: {parse_google_error(resp.text)}")
     data = resp.json()
@@ -370,7 +370,7 @@ async def create_folder(body: CreateFolderRequest):
 
 
 async def _fetch_text_content(
-    client: httpx.AsyncClient, file_id: str, mime: str, name: str
+    client: httpx.AsyncClient, file_id: str, mime: str, name: str, **kwargs
 ) -> str:
     """Download a Drive file and return its content as a string.
 
@@ -383,7 +383,7 @@ async def _fetch_text_content(
         url = f"{DRIVE_API}/files/{file_id}"
         params = {"alt": "media"}
 
-    r = await token_manager.google_request(client, "GET", url, params=params)
+    r = await token_manager.google_request(client, "GET", url, params=params, **kwargs)
     if r.status_code != 200:
         raise HTTPException(502, f"Drive download error for '{name}': {parse_google_error(r.text)}")
 
@@ -408,20 +408,26 @@ async def get_file_content(file_id: str):
     PDFs are parsed and returned as plain text.
     Response includes X-File-Name and X-File-Id headers.
     """
-    async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
-        meta = await _api_get(
-            client, f"files/{file_id}", {"fields": "id, name, mimeType, parents"}
+    client = get_client()
+    meta = await _api_get(
+        client,
+        f"files/{file_id}",
+        {"fields": "id, name, mimeType, parents"},
+        follow_redirects=True,
+        timeout=60.0,
+    )
+    mime = meta.get("mimeType", "")
+    name = meta.get("name", file_id)
+
+    if not _is_readable(mime):
+        raise HTTPException(
+            415,
+            f"Cannot read binary file ({mime}). Only text files, PDFs, and Google Docs are supported.",
         )
-        mime = meta.get("mimeType", "")
-        name = meta.get("name", file_id)
 
-        if not _is_readable(mime):
-            raise HTTPException(
-                415,
-                f"Cannot read binary file ({mime}). Only text files, PDFs, and Google Docs are supported.",
-            )
-
-        text = await _fetch_text_content(client, file_id, mime, name)
+    text = await _fetch_text_content(
+        client, file_id, mime, name, follow_redirects=True, timeout=60.0
+    )
 
     return Response(
         content=text.encode("utf-8"),
@@ -447,14 +453,14 @@ async def _multipart_upload(metadata: dict, content: str, mime_type: str) -> dic
         f"--{boundary}--"
     ).encode("utf-8")
     content_type = f"multipart/related; boundary={boundary}"
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await token_manager.google_request(
-            client,
-            "POST",
-            "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-            content=encoded,
-            headers={"Content-Type": content_type},
-        )
+    resp = await token_manager.google_request(
+        get_client(),
+        "POST",
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+        content=encoded,
+        headers={"Content-Type": content_type},
+        timeout=60.0,
+    )
     if resp.status_code not in (200, 201):
         raise HTTPException(502, f"Drive upload error: {parse_google_error(resp.text)}")
     return resp.json()
@@ -464,10 +470,14 @@ async def _media_upload(file_id: str, content: str, mime_type: str) -> dict:
     """Overwrite a Drive file's content via media upload."""
     encoded = content.encode("utf-8")
     url = f"https://www.googleapis.com/upload/drive/v3/files/{file_id}?uploadType=media"
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await token_manager.google_request(
-            client, "PATCH", url, content=encoded, headers={"Content-Type": mime_type}
-        )
+    resp = await token_manager.google_request(
+        get_client(),
+        "PATCH",
+        url,
+        content=encoded,
+        headers={"Content-Type": mime_type},
+        timeout=60.0,
+    )
     if resp.status_code != 200:
         raise HTTPException(502, f"Drive upload error: {parse_google_error(resp.text)}")
     return resp.json()
@@ -483,12 +493,11 @@ async def get_file_metadata(file_id: str):
 
     Use this to identify a file type before reading or manipulating it.
     """
-    async with httpx.AsyncClient() as client:
-        meta = await _api_get(
-            client,
-            f"files/{file_id}",
-            {"fields": "id, name, mimeType, modifiedTime, size, parents"},
-        )
+    meta = await _api_get(
+        get_client(),
+        f"files/{file_id}",
+        {"fields": "id, name, mimeType, modifiedTime, size, parents"},
+    )
     return DriveFile(
         id=meta["id"],
         name=meta.get("name", file_id),
@@ -515,23 +524,24 @@ async def move_file(file_id: str, body: MoveFileRequest):
     if body.name:
         metadata["name"] = body.name
 
+    client = get_client()
+
     if body.folder_id:
         # Fetch current parents so we can remove them when adding the new one
-        async with httpx.AsyncClient() as client:
-            meta = await _api_get(client, f"files/{file_id}", {"fields": "parents"})
+        meta = await _api_get(client, f"files/{file_id}", {"fields": "parents"})
         current_parents = ",".join(meta.get("parents", []))
         params["addParents"] = body.folder_id
         if current_parents:
             params["removeParents"] = current_parents
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await token_manager.google_request(
-            client,
-            "PATCH",
-            f"{DRIVE_API}/files/{file_id}",
-            json=metadata,
-            params={**params, "fields": "id, name, mimeType, modifiedTime, size"},
-        )
+    resp = await token_manager.google_request(
+        client,
+        "PATCH",
+        f"{DRIVE_API}/files/{file_id}",
+        json=metadata,
+        params={**params, "fields": "id, name, mimeType, modifiedTime, size"},
+        timeout=30.0,
+    )
     if resp.status_code == 404:
         raise HTTPException(404, "File not found")
     if resp.status_code != 200:
@@ -590,17 +600,22 @@ async def append_to_file(file_id: str, body: AppendFileRequest):
     Reads the current content, concatenates the new text (with separator),
     then writes back. Works for plain text files and Google Docs alike.
     """
-    async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
-        meta = await _api_get(client, f"files/{file_id}", {"fields": "id, name, mimeType"})
-        mime = meta.get("mimeType", "")
-        name = meta.get("name", file_id)
+    client = get_client()
+    meta = await _api_get(
+        client, f"files/{file_id}", {"fields": "id, name, mimeType"},
+        follow_redirects=True, timeout=60.0,
+    )
+    mime = meta.get("mimeType", "")
+    name = meta.get("name", file_id)
 
-        if not _is_readable(mime):
-            raise HTTPException(415, f"Cannot append to binary file ({mime}).")
-        if mime == _PDF_MIME:
-            raise HTTPException(415, "Cannot append to a PDF.")
+    if not _is_readable(mime):
+        raise HTTPException(415, f"Cannot append to binary file ({mime}).")
+    if mime == _PDF_MIME:
+        raise HTTPException(415, "Cannot append to a PDF.")
 
-        current = await _fetch_text_content(client, file_id, mime, name)
+    current = await _fetch_text_content(
+        client, file_id, mime, name, follow_redirects=True, timeout=60.0
+    )
 
     combined = current + body.separator + body.content
     await _media_upload(file_id, combined, "text/plain")
@@ -627,16 +642,16 @@ async def copy_github_to_drive(body: CopyFromGithubRequest):
     if body.ref:
         params["ref"] = body.ref
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
-            f"https://api.github.com/repos/{body.owner}/{body.repo}/contents/{body.path}",
-            headers={
-                "Authorization": f"Bearer {settings.github_token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            params=params,
-        )
+    resp = await get_client().get(
+        f"https://api.github.com/repos/{body.owner}/{body.repo}/contents/{body.path}",
+        headers={
+            "Authorization": f"Bearer {settings.github_token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        params=params,
+        timeout=30.0,
+    )
 
     if resp.status_code == 404:
         raise HTTPException(404, f"File not found in GitHub: {body.path}")
@@ -682,10 +697,9 @@ async def copy_drive_file(file_id: str, body: CopyDriveFileRequest):
     if body.folder_id:
         payload["parents"] = [body.folder_id]
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await token_manager.google_request(
-            client, "POST", f"{DRIVE_API}/files/{file_id}/copy", json=payload
-        )
+    resp = await token_manager.google_request(
+        get_client(), "POST", f"{DRIVE_API}/files/{file_id}/copy", json=payload, timeout=60.0
+    )
     if resp.status_code == 404:
         raise HTTPException(404, "Source file not found.")
     if resp.status_code not in (200, 201):
@@ -697,8 +711,7 @@ async def copy_drive_file(file_id: str, body: CopyDriveFileRequest):
 @router.put("/files/{file_id}")
 async def update_file(file_id: str, body: UpdateFileRequest):
     """Overwrite the text content of an existing Google Drive file."""
-    async with httpx.AsyncClient() as client:
-        meta = await _api_get(client, f"files/{file_id}", {"fields": "id, name, mimeType"})
+    meta = await _api_get(get_client(), f"files/{file_id}", {"fields": "id, name, mimeType"})
     mime = meta.get("mimeType", "text/plain")
     if not _is_readable(mime):
         raise HTTPException(415, f"Cannot update binary file ({mime}).")
@@ -710,10 +723,9 @@ async def update_file(file_id: str, body: UpdateFileRequest):
 @router.delete("/files/{file_id}", status_code=204)
 async def delete_file(file_id: str):
     """Move a Google Drive file to trash."""
-    async with httpx.AsyncClient() as client:
-        resp = await token_manager.google_request(
-            client, "PATCH", f"{DRIVE_API}/files/{file_id}", json={"trashed": True}
-        )
+    resp = await token_manager.google_request(
+        get_client(), "PATCH", f"{DRIVE_API}/files/{file_id}", json={"trashed": True}
+    )
     if resp.status_code == 404:
         raise HTTPException(404, "File not found")
     if resp.status_code not in (200, 204):

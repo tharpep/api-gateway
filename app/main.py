@@ -10,6 +10,8 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.dependencies import verify_api_key
+from app.http_client import shutdown as http_client_shutdown
+from app.http_client import startup as http_client_startup
 from app.migrations import run_migrations
 from app.routers import (
     ai,
@@ -36,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    await http_client_startup()
+
     # Run pending migrations before serving traffic. Failures crash startup so
     # Cloud Run keeps the previous revision live instead of running half-applied
     # schema.
@@ -44,7 +48,10 @@ async def lifespan(_: FastAPI):
         await run_migrations(dsn)
     else:
         logger.info("DATABASE_URL not set; skipping migrations")
+
     yield
+
+    await http_client_shutdown()
 
 
 app = FastAPI(

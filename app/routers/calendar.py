@@ -3,12 +3,12 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.auth import token_manager
 from app.errors import parse_google_error
+from app.http_client import get_client
 
 router = APIRouter()
 
@@ -43,27 +43,27 @@ async def _fetch_events(time_min: datetime, time_max: datetime) -> list[Calendar
 
     items: list[dict] = []
     page_token: str | None = None
+    client = get_client()
 
-    async with httpx.AsyncClient() as client:
-        for _ in range(_MAX_PAGES):
-            params = dict(base_params)
-            if page_token:
-                params["pageToken"] = page_token
+    for _ in range(_MAX_PAGES):
+        params = dict(base_params)
+        if page_token:
+            params["pageToken"] = page_token
 
-            response = await token_manager.google_request(
-                client, "GET", f"{GOOGLE_CALENDAR_API}/calendars/primary/events", params=params
+        response = await token_manager.google_request(
+            client, "GET", f"{GOOGLE_CALENDAR_API}/calendars/primary/events", params=params
+        )
+
+        if response.status_code != 200:
+            raise HTTPException(
+                502, f"Google Calendar API error: {parse_google_error(response.text)}"
             )
 
-            if response.status_code != 200:
-                raise HTTPException(
-                    502, f"Google Calendar API error: {parse_google_error(response.text)}"
-                )
-
-            data = response.json()
-            items.extend(data.get("items", []))
-            page_token = data.get("nextPageToken")
-            if not page_token:
-                break
+        data = response.json()
+        items.extend(data.get("items", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
 
     events = []
 
@@ -183,10 +183,9 @@ async def create_event(body: CreateEventRequest):
             "overrides": [{"method": "popup", "minutes": m} for m in body.reminder_minutes],
         }
 
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client, "POST", f"{GOOGLE_CALENDAR_API}/calendars/primary/events", json=payload
-        )
+    response = await token_manager.google_request(
+        get_client(), "POST", f"{GOOGLE_CALENDAR_API}/calendars/primary/events", json=payload
+    )
 
     if response.status_code not in (200, 201):
         raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
@@ -231,13 +230,12 @@ async def update_event(event_id: str, body: UpdateEventRequest):
             "overrides": [{"method": "popup", "minutes": m} for m in body.reminder_minutes],
         }
 
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client,
-            "PATCH",
-            f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}",
-            json=payload,
-        )
+    response = await token_manager.google_request(
+        get_client(),
+        "PATCH",
+        f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}",
+        json=payload,
+    )
 
     if response.status_code != 200:
         raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
@@ -263,13 +261,12 @@ async def search_events(
     max_results: int = Query(default=10, ge=1, le=50),
 ):
     """Search calendar events by keyword across all time."""
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client,
-            "GET",
-            f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
-            params={"q": q, "singleEvents": "true", "maxResults": max_results},
-        )
+    response = await token_manager.google_request(
+        get_client(),
+        "GET",
+        f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
+        params={"q": q, "singleEvents": "true", "maxResults": max_results},
+    )
     if response.status_code != 200:
         raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
     events = []
@@ -291,10 +288,9 @@ async def search_events(
 @router.delete("/events/{event_id}", status_code=204)
 async def delete_event(event_id: str):
     """Delete a calendar event."""
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client, "DELETE", f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}"
-        )
+    response = await token_manager.google_request(
+        get_client(), "DELETE", f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}"
+    )
 
     if response.status_code not in (200, 204):
         raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
@@ -322,10 +318,9 @@ async def get_availability(
         "items": [{"id": "primary"}],
     }
 
-    async with httpx.AsyncClient() as client:
-        response = await token_manager.google_request(
-            client, "POST", f"{GOOGLE_CALENDAR_API}/freeBusy", json=payload
-        )
+    response = await token_manager.google_request(
+        get_client(), "POST", f"{GOOGLE_CALENDAR_API}/freeBusy", json=payload
+    )
 
     if response.status_code != 200:
         raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
