@@ -48,9 +48,9 @@ Two implementations:
 
 `app/routers/ai.py` lazily initializes provider singletons, selects provider based on model name, and exposes OpenAI-compatible endpoints. Rate limited to 60 req/min via slowapi.
 
-### Google OAuth (`app/auth/google.py`)
+### Google OAuth (`app/auth/google.py`, `app/auth/token_manager.py`)
 
-Stateless OAuth helper with token refresh. Routers that use Google APIs cache the access token in-memory and refresh on 401 responses. Initial refresh token obtained via `get_google_token.py` utility script.
+`google.py` is a stateless OAuth helper (exchange/refresh/expiry-check). `token_manager.py` holds the one shared access-token cache and refresh lock — all Google-backed routers use the same refresh token (see `ALL_SCOPES`), so they use `token_manager.get_access_token()` / `token_manager.google_request(client, method, url, ...)` instead of keeping their own per-router cache. Initial refresh token obtained via `get_google_token.py` utility script.
 
 ### Routers (`app/routers/`)
 
@@ -103,5 +103,5 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
 - Streaming AI responses use **Server-Sent Events** (SSE) format
 - CORS allows `localhost:3000` and `localhost:3001` by default (configurable in settings)
 - Docker uses `PORT` env var (Cloud Run sets 8080), falls back to 8000
-- Google API routers all follow the same pattern: module-level `_cached_token` + `_oauth` singleton, `_get_access_token()` helper that refreshes on expiry, auto-retry once on 401
+- Google API routers all call `app.auth.token_manager.google_request()` for authenticated requests — a single shared access-token cache (behind an `asyncio.Lock`) and 401-retry, instead of a per-router copy
 - Schema changes go in `app/migrations/` as numbered SQL files; never use lazy `CREATE TABLE` inside a router

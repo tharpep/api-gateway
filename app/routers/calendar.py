@@ -7,8 +7,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.auth.google import GoogleOAuth, TokenData
-from app.config import settings
+from app.auth import token_manager
 from app.errors import parse_google_error
 
 router = APIRouter()
@@ -16,21 +15,6 @@ router = APIRouter()
 GOOGLE_CALENDAR_API = "https://www.googleapis.com/calendar/v3"
 DEFAULT_TIMEZONE = "America/New_York"
 _MAX_PAGES = 20
-
-_cached_token: TokenData | None = None
-_oauth = GoogleOAuth()
-
-
-async def _get_access_token() -> str:
-    """Get a valid access token, refreshing if needed."""
-    global _cached_token
-
-    if _cached_token is None or _oauth.is_token_expired(_cached_token):
-        if not settings.google_refresh_token:
-            raise HTTPException(503, "Google refresh token not configured")
-        _cached_token = await _oauth.refresh_token(settings.google_refresh_token)
-
-    return _cached_token.access_token
 
 
 class CalendarEvent(BaseModel):
@@ -49,8 +33,6 @@ class CalendarResponse(BaseModel):
 
 async def _fetch_events(time_min: datetime, time_max: datetime) -> list[CalendarEvent]:
     """Fetch events from Google Calendar API, following pagination until exhausted."""
-    access_token = await _get_access_token()
-
     base_params = {
         "timeMin": time_min.isoformat(),
         "timeMax": time_max.isoformat(),
@@ -68,22 +50,9 @@ async def _fetch_events(time_min: datetime, time_max: datetime) -> list[Calendar
             if page_token:
                 params["pageToken"] = page_token
 
-            response = await client.get(
-                f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
-                params=params,
-                headers={"Authorization": f"Bearer {access_token}"},
+            response = await token_manager.google_request(
+                client, "GET", f"{GOOGLE_CALENDAR_API}/calendars/primary/events", params=params
             )
-
-            if response.status_code == 401:
-                global _cached_token
-                _cached_token = None
-                access_token = await _get_access_token()
-
-                response = await client.get(
-                    f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
-                    params=params,
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
 
             if response.status_code != 200:
                 raise HTTPException(
@@ -186,8 +155,6 @@ class UpdateEventRequest(BaseModel):
 @router.post("/events", response_model=CalendarEvent, status_code=201)
 async def create_event(body: CreateEventRequest):
     """Create a new calendar event."""
-    access_token = await _get_access_token()
-
     if body.all_day:
         payload = {
             "summary": body.title,
@@ -217,10 +184,8 @@ async def create_event(body: CreateEventRequest):
         }
 
     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
-            json=payload,
-            headers={"Authorization": f"Bearer {access_token}"},
+        response = await token_manager.google_request(
+            client, "POST", f"{GOOGLE_CALENDAR_API}/calendars/primary/events", json=payload
         )
 
     if response.status_code not in (200, 201):
@@ -244,8 +209,6 @@ async def create_event(body: CreateEventRequest):
 @router.patch("/events/{event_id}", response_model=CalendarEvent)
 async def update_event(event_id: str, body: UpdateEventRequest):
     """Update an existing calendar event."""
-    access_token = await _get_access_token()
-
     payload: dict = {}
     if body.title is not None:
         payload["summary"] = body.title
@@ -269,10 +232,11 @@ async def update_event(event_id: str, body: UpdateEventRequest):
         }
 
     async with httpx.AsyncClient() as client:
-        response = await client.patch(
+        response = await token_manager.google_request(
+            client,
+            "PATCH",
             f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}",
             json=payload,
-            headers={"Authorization": f"Bearer {access_token}"},
         )
 
     if response.status_code != 200:
@@ -299,12 +263,12 @@ async def search_events(
     max_results: int = Query(default=10, ge=1, le=50),
 ):
     """Search calendar events by keyword across all time."""
-    access_token = await _get_access_token()
     async with httpx.AsyncClient() as client:
-        response = await client.get(
+        response = await token_manager.google_request(
+            client,
+            "GET",
             f"{GOOGLE_CALENDAR_API}/calendars/primary/events",
             params={"q": q, "singleEvents": "true", "maxResults": max_results},
-            headers={"Authorization": f"Bearer {access_token}"},
         )
     if response.status_code != 200:
         raise HTTPException(502, f"Google Calendar API error: {parse_google_error(response.text)}")
@@ -327,12 +291,9 @@ async def search_events(
 @router.delete("/events/{event_id}", status_code=204)
 async def delete_event(event_id: str):
     """Delete a calendar event."""
-    access_token = await _get_access_token()
-
     async with httpx.AsyncClient() as client:
-        response = await client.delete(
-            f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}",
-            headers={"Authorization": f"Bearer {access_token}"},
+        response = await token_manager.google_request(
+            client, "DELETE", f"{GOOGLE_CALENDAR_API}/calendars/primary/events/{event_id}"
         )
 
     if response.status_code not in (200, 204):
@@ -354,7 +315,6 @@ async def get_availability(
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     end = start + timedelta(days=days)
-    access_token = await _get_access_token()
 
     payload = {
         "timeMin": start.isoformat(),
@@ -363,10 +323,8 @@ async def get_availability(
     }
 
     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{GOOGLE_CALENDAR_API}/freeBusy",
-            json=payload,
-            headers={"Authorization": f"Bearer {access_token}"},
+        response = await token_manager.google_request(
+            client, "POST", f"{GOOGLE_CALENDAR_API}/freeBusy", json=payload
         )
 
     if response.status_code != 200:
@@ -380,4 +338,3 @@ async def get_availability(
         time_max=end.isoformat(),
         busy=[BusySlot(start=s["start"], end=s["end"]) for s in busy_raw],
     )
-

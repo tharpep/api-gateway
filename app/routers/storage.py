@@ -14,7 +14,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from pypdf import PdfReader
 
-from app.auth.google import GoogleOAuth, TokenData
+from app.auth import token_manager
 from app.config import settings
 from app.errors import parse_google_error
 
@@ -53,37 +53,9 @@ _folder_id_cache: dict[str, str] = {}
 _kb_subfolder_cache: dict[str, Any] = {"folders": None, "expires_at": 0.0}
 _KB_SUBFOLDER_CACHE_TTL_SECONDS = 300
 
-_cached_token: TokenData | None = None
-_oauth = GoogleOAuth()
-
-
-async def _get_access_token() -> str:
-    """Get a valid access token, refreshing if needed."""
-    global _cached_token
-    if _cached_token is None or _oauth.is_token_expired(_cached_token):
-        if not settings.google_refresh_token:
-            raise HTTPException(503, "Google refresh token not configured")
-        _cached_token = await _oauth.refresh_token(settings.google_refresh_token)
-    return _cached_token.access_token
-
-
 async def _api_get(client: httpx.AsyncClient, path: str, params: dict) -> dict:
     """Authenticated Drive API GET — auto-retries once on 401."""
-    global _cached_token
-    token = await _get_access_token()
-    r = await client.get(
-        f"{DRIVE_API}/{path}",
-        params=params,
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    if r.status_code == 401:
-        _cached_token = None
-        token = await _get_access_token()
-        r = await client.get(
-            f"{DRIVE_API}/{path}",
-            params=params,
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    r = await token_manager.google_request(client, "GET", f"{DRIVE_API}/{path}", params=params)
     if r.status_code != 200:
         raise HTTPException(502, f"Drive API error: {parse_google_error(r.text)}")
     return r.json()
@@ -384,25 +356,13 @@ class CreateFolderRequest(BaseModel):
 @router.post("/folders", status_code=201)
 async def create_folder(body: CreateFolderRequest):
     """Create a new folder in Google Drive."""
-    global _cached_token
     metadata: dict = {"name": body.name, "mimeType": _FOLDER_MIME}
     if body.parent_id:
         metadata["parents"] = [body.parent_id]
-    token = await _get_access_token()
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{DRIVE_API}/files",
-            json=metadata,
-            headers={"Authorization": f"Bearer {token}"},
+        resp = await token_manager.google_request(
+            client, "POST", f"{DRIVE_API}/files", json=metadata
         )
-        if resp.status_code == 401:
-            _cached_token = None
-            token = await _get_access_token()
-            resp = await client.post(
-                f"{DRIVE_API}/files",
-                json=metadata,
-                headers={"Authorization": f"Bearer {token}"},
-            )
     if resp.status_code not in (200, 201):
         raise HTTPException(502, f"Drive folder creation failed: {parse_google_error(resp.text)}")
     data = resp.json()
@@ -416,7 +376,6 @@ async def _fetch_text_content(
 
     Handles Google Workspace export, PDF parsing, and raw text reads.
     """
-    global _cached_token
     if mime in _EXPORT_MIMES:
         url = f"{DRIVE_API}/files/{file_id}/export"
         params: dict = {"mimeType": _EXPORT_MIMES[mime]}
@@ -424,12 +383,7 @@ async def _fetch_text_content(
         url = f"{DRIVE_API}/files/{file_id}"
         params = {"alt": "media"}
 
-    token = await _get_access_token()
-    r = await client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
-    if r.status_code == 401:
-        _cached_token = None
-        token = await _get_access_token()
-        r = await client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
+    r = await token_manager.google_request(client, "GET", url, params=params)
     if r.status_code != 200:
         raise HTTPException(502, f"Drive download error for '{name}': {parse_google_error(r.text)}")
 
@@ -482,7 +436,6 @@ async def get_file_content(file_id: str):
 
 async def _multipart_upload(metadata: dict, content: str, mime_type: str) -> dict:
     """Create a new Drive file via multipart upload."""
-    global _cached_token
     boundary = uuid.uuid4().hex
     encoded = (
         f"--{boundary}\r\n"
@@ -494,21 +447,14 @@ async def _multipart_upload(metadata: dict, content: str, mime_type: str) -> dic
         f"--{boundary}--"
     ).encode("utf-8")
     content_type = f"multipart/related; boundary={boundary}"
-    token = await _get_access_token()
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
+        resp = await token_manager.google_request(
+            client,
+            "POST",
             "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
             content=encoded,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": content_type},
+            headers={"Content-Type": content_type},
         )
-        if resp.status_code == 401:
-            _cached_token = None
-            token = await _get_access_token()
-            resp = await client.post(
-                "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-                content=encoded,
-                headers={"Authorization": f"Bearer {token}", "Content-Type": content_type},
-            )
     if resp.status_code not in (200, 201):
         raise HTTPException(502, f"Drive upload error: {parse_google_error(resp.text)}")
     return resp.json()
@@ -516,24 +462,12 @@ async def _multipart_upload(metadata: dict, content: str, mime_type: str) -> dic
 
 async def _media_upload(file_id: str, content: str, mime_type: str) -> dict:
     """Overwrite a Drive file's content via media upload."""
-    global _cached_token
     encoded = content.encode("utf-8")
     url = f"https://www.googleapis.com/upload/drive/v3/files/{file_id}?uploadType=media"
-    token = await _get_access_token()
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.patch(
-            url,
-            content=encoded,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": mime_type},
+        resp = await token_manager.google_request(
+            client, "PATCH", url, content=encoded, headers={"Content-Type": mime_type}
         )
-        if resp.status_code == 401:
-            _cached_token = None
-            token = await _get_access_token()
-            resp = await client.patch(
-                url,
-                content=encoded,
-                headers={"Authorization": f"Bearer {token}", "Content-Type": mime_type},
-            )
     if resp.status_code != 200:
         raise HTTPException(502, f"Drive upload error: {parse_google_error(resp.text)}")
     return resp.json()
@@ -572,11 +506,9 @@ class MoveFileRequest(BaseModel):
 @router.patch("/files/{file_id}")
 async def move_file(file_id: str, body: MoveFileRequest):
     """Rename and/or move a Drive file to a different folder."""
-    global _cached_token
     if not body.name and not body.folder_id:
         raise HTTPException(400, "Provide at least one of: name, folder_id")
 
-    token = await _get_access_token()
     params: dict = {}
     metadata: dict = {}
 
@@ -593,21 +525,13 @@ async def move_file(file_id: str, body: MoveFileRequest):
             params["removeParents"] = current_parents
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.patch(
+        resp = await token_manager.google_request(
+            client,
+            "PATCH",
             f"{DRIVE_API}/files/{file_id}",
             json=metadata,
             params={**params, "fields": "id, name, mimeType, modifiedTime, size"},
-            headers={"Authorization": f"Bearer {token}"},
         )
-        if resp.status_code == 401:
-            _cached_token = None
-            token = await _get_access_token()
-            resp = await client.patch(
-                f"{DRIVE_API}/files/{file_id}",
-                json=metadata,
-                params={**params, "fields": "id, name, mimeType, modifiedTime, size"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
     if resp.status_code == 404:
         raise HTTPException(404, "File not found")
     if resp.status_code != 200:
@@ -752,28 +676,16 @@ class CopyDriveFileRequest(BaseModel):
 @router.post("/files/{file_id}/copy", status_code=201)
 async def copy_drive_file(file_id: str, body: CopyDriveFileRequest):
     """Copy a Drive file within Drive. Content transfer is handled by Drive internally."""
-    global _cached_token
     payload: dict = {}
     if body.name:
         payload["name"] = body.name
     if body.folder_id:
         payload["parents"] = [body.folder_id]
 
-    token = await _get_access_token()
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            f"{DRIVE_API}/files/{file_id}/copy",
-            json=payload,
-            headers={"Authorization": f"Bearer {token}"},
+        resp = await token_manager.google_request(
+            client, "POST", f"{DRIVE_API}/files/{file_id}/copy", json=payload
         )
-        if resp.status_code == 401:
-            _cached_token = None
-            token = await _get_access_token()
-            resp = await client.post(
-                f"{DRIVE_API}/files/{file_id}/copy",
-                json=payload,
-                headers={"Authorization": f"Bearer {token}"},
-            )
     if resp.status_code == 404:
         raise HTTPException(404, "Source file not found.")
     if resp.status_code not in (200, 201):
@@ -798,22 +710,10 @@ async def update_file(file_id: str, body: UpdateFileRequest):
 @router.delete("/files/{file_id}", status_code=204)
 async def delete_file(file_id: str):
     """Move a Google Drive file to trash."""
-    global _cached_token
-    token = await _get_access_token()
     async with httpx.AsyncClient() as client:
-        resp = await client.patch(
-            f"{DRIVE_API}/files/{file_id}",
-            json={"trashed": True},
-            headers={"Authorization": f"Bearer {token}"},
+        resp = await token_manager.google_request(
+            client, "PATCH", f"{DRIVE_API}/files/{file_id}", json={"trashed": True}
         )
-        if resp.status_code == 401:
-            _cached_token = None
-            token = await _get_access_token()
-            resp = await client.patch(
-                f"{DRIVE_API}/files/{file_id}",
-                json={"trashed": True},
-                headers={"Authorization": f"Bearer {token}"},
-            )
     if resp.status_code == 404:
         raise HTTPException(404, "File not found")
     if resp.status_code not in (200, 204):
