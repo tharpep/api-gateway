@@ -82,6 +82,18 @@ class DraftRequest(BaseModel):
     cc: str | None = None
 
 
+class SendRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    cc: str | None = None
+
+
+class ReplyRequest(BaseModel):
+    body: str
+    reply_all: bool = False  # also CC everyone the original message was CC'd to
+
+
 
 async def _fetch_messages(query: str, max_results: int = 50) -> list[EmailMessage]:
     """Fetch messages matching a Gmail query, returning metadata summaries."""
@@ -210,3 +222,87 @@ async def create_draft(body: DraftRequest):
 
     data = response.json()
     return {"id": data.get("id"), "message_id": data.get("message", {}).get("id")}
+
+
+@router.post("/send", status_code=201)
+async def send_email(body: SendRequest):
+    """Send an email immediately — no draft step.
+
+    Uses the gmail.compose scope, already granted (that scope covers both
+    draft management and sending messages/drafts), so this needs no new
+    OAuth consent.
+    """
+    raw = _build_raw_message(body.to, body.subject, body.body, body.cc)
+
+    response = await token_manager.google_request(
+        get_client(), "POST", f"{GMAIL_API}/users/me/messages/send", json={"raw": raw}
+    )
+
+    if response.status_code not in (200, 201):
+        raise HTTPException(502, f"Gmail API error: {parse_google_error(response.text)}")
+
+    data = response.json()
+    return {"id": data.get("id"), "thread_id": data.get("threadId")}
+
+
+@router.post("/reply/{message_id}", status_code=201)
+async def reply_to_email(message_id: str, body: ReplyRequest):
+    """Reply to an existing message, keeping it in the same Gmail thread.
+
+    Replies to the original sender (From header). reply_all also CCs
+    whoever the original message was CC'd to — it does not merge the
+    original To recipients into CC.
+    """
+    client = get_client()
+
+    orig_resp = await token_manager.google_request(
+        client,
+        "GET",
+        f"{GMAIL_API}/users/me/messages/{message_id}",
+        params={
+            "format": "metadata",
+            "metadataHeaders": ["From", "Cc", "Subject", "Message-ID", "References"],
+        },
+    )
+    if orig_resp.status_code == 404:
+        raise HTTPException(404, "Message not found")
+    if orig_resp.status_code != 200:
+        raise HTTPException(502, f"Gmail API error: {parse_google_error(orig_resp.text)}")
+
+    orig = orig_resp.json()
+    hdrs = {h["name"]: h["value"] for h in orig.get("payload", {}).get("headers", [])}
+    thread_id = orig.get("threadId", "")
+
+    to = hdrs.get("From", "")
+    if not to:
+        raise HTTPException(422, "Original message has no From address to reply to")
+
+    subject = hdrs.get("Subject", "")
+    if subject and not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+
+    cc = hdrs.get("Cc") if body.reply_all else None
+
+    orig_message_id = hdrs.get("Message-ID", "")
+    references = " ".join(filter(None, [hdrs.get("References", ""), orig_message_id])).strip()
+
+    raw = _build_raw_message(
+        to,
+        subject,
+        body.body,
+        cc=cc,
+        in_reply_to=orig_message_id or None,
+        references=references or None,
+    )
+
+    send_response = await token_manager.google_request(
+        client,
+        "POST",
+        f"{GMAIL_API}/users/me/messages/send",
+        json={"raw": raw, "threadId": thread_id},
+    )
+    if send_response.status_code not in (200, 201):
+        raise HTTPException(502, f"Gmail API error: {parse_google_error(send_response.text)}")
+
+    data = send_response.json()
+    return {"id": data.get("id"), "thread_id": data.get("threadId")}
