@@ -1,5 +1,6 @@
 """Storage endpoint — Google Drive files."""
 
+import asyncio
 import base64
 import io
 import json
@@ -277,11 +278,15 @@ async def list_kb_files(
             )
         raw_files = await _list_files_in_folder(client, match["id"], category, modified_after)
     else:
-        for folder in subfolders:
-            cat_key = folder["name"].lower()
-            kb_files = await _list_files_in_folder(
-                client, folder["id"], cat_key, modified_after
-            )
+        # Each subfolder's BFS is independent — fetch them concurrently instead
+        # of one at a time, which was the dominant cost on a KB root with
+        # several subfolders (list_files with no category, and sync_kb via
+        # the knowledge-base service both hit this path).
+        per_folder = await asyncio.gather(*[
+            _list_files_in_folder(client, folder["id"], folder["name"].lower(), modified_after)
+            for folder in subfolders
+        ])
+        for kb_files in per_folder:
             raw_files.extend(kb_files)
 
     files = [
