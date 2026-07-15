@@ -1,5 +1,7 @@
 """Tasks endpoint - Google Tasks integration."""
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
@@ -122,8 +124,15 @@ async def _fetch_task_list_title(list_id: str) -> str:
 @router.get("/lists/{list_id}/tasks")
 async def get_tasks(list_id: str, include_completed: bool = Query(default=False)):
     """Get tasks from a specific list. Excludes completed tasks by default."""
-    list_title = await _fetch_task_list_title(list_id)
-    tasks = await _fetch_tasks_from_list(list_id, list_title, include_completed=include_completed)
+    # The title fetch doesn't depend on the tasks fetch (or vice versa) — run
+    # them concurrently and stamp the real title onto each task afterward,
+    # instead of waiting for the title before even starting the tasks fetch.
+    list_title, tasks = await asyncio.gather(
+        _fetch_task_list_title(list_id),
+        _fetch_tasks_from_list(list_id, list_id, include_completed=include_completed),
+    )
+    for task in tasks:
+        task.list_name = list_title
     return {"tasks": tasks, "count": len(tasks)}
 
 
