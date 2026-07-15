@@ -51,5 +51,10 @@ class Settings(BaseSettings):
     bluesky_identifier: str = ""    # reserved for future authenticated ops; search is public
     bluesky_app_password: str = ""  # reserved for future authenticated ops
 
+    # Observability — error tracking (Sentry). Empty DSN = fully disabled, no-op;
+    # nothing to configure unless/until a Sentry project exists.
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.1
+
 
 settings = Settings()
