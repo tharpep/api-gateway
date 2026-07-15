@@ -1,5 +1,6 @@
 """Email endpoint - Gmail integration."""
 
+import asyncio
 import base64
 from email.mime.text import MIMEText
 
@@ -113,15 +114,21 @@ async def _fetch_messages(query: str, max_results: int = 50) -> list[EmailMessag
     if not message_ids:
         return []
 
-    messages = []
-    for msg_id in message_ids:
-        msg_response = await token_manager.google_request(
+    # Each message's detail fetch is independent — do them concurrently
+    # instead of one at a time, which was the dominant cost of every list/
+    # search/recent/unread call for anything beyond a couple of messages.
+    detail_responses = await asyncio.gather(*[
+        token_manager.google_request(
             client,
             "GET",
             f"{GMAIL_API}/users/me/messages/{msg_id}",
             params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]},
         )
+        for msg_id in message_ids
+    ])
 
+    messages = []
+    for msg_response in detail_responses:
         if msg_response.status_code == 200:
             msg_data = msg_response.json()
             hdrs = {h["name"]: h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
