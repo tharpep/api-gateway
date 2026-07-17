@@ -22,8 +22,8 @@ ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 
 CLAUDE_MODELS = [
-    "claude-opus-4-5-20251101",
-    "claude-sonnet-4-5-20250929",
+    "claude-opus-4-8",
+    "claude-sonnet-5",
     "claude-haiku-4-5-20251001",
 ]
 
