@@ -23,9 +23,20 @@ ANTHROPIC_VERSION = "2023-06-01"
 
 CLAUDE_MODELS = [
     "claude-opus-4-8",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
     "claude-sonnet-5",
     "claude-haiku-4-5-20251001",
 ]
+
+
+def _model_extras(model: str) -> dict:
+    """Haiku 5.5 thinks by default and thinking counts toward max_tokens, which would eat
+    the 1024 default here; this proxy serves short completions, so keep Haiku 5.5 thinking
+    off (as Haiku 4.5 behaved). Other models keep their API defaults."""
+    if model.startswith("claude-haiku-5"):
+        return {"thinking": {"type": "disabled"}}
+    return {}
 
 
 class AnthropicProvider(BaseProvider):
@@ -63,6 +74,7 @@ class AnthropicProvider(BaseProvider):
             "model": request.model,
             "messages": messages,
             "max_tokens": request.max_tokens or 1024,
+            **_model_extras(request.model),
         }
 
         if system_content:
@@ -80,9 +92,10 @@ class AnthropicProvider(BaseProvider):
         response.raise_for_status()
         data = response.json()
 
-        content = ""
-        if data.get("content") and len(data["content"]) > 0:
-            content = data["content"][0].get("text", "")
+        # Read by block type: newer models can return thinking blocks before the text.
+        content = "".join(
+            b.get("text", "") for b in data.get("content") or [] if b.get("type") == "text"
+        )
 
         return ChatCompletionResponse(
             id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
@@ -113,6 +126,7 @@ class AnthropicProvider(BaseProvider):
             "messages": messages,
             "max_tokens": request.max_tokens or 1024,
             "stream": True,
+            **_model_extras(request.model),
         }
 
         if system_content:

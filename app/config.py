@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # AI
     anthropic_api_key: str = ""
     openrouter_api_key: str = ""
-    default_ai_model: str = "claude-haiku-4-5-20251001"
+    default_ai_model: str = "claude-haiku-5-5"
 
     # KB service (MY-AI)
     kb_service_url: str = ""
