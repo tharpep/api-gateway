@@ -49,14 +49,39 @@ def _view(svc: ServiceDef, latest: dict, states: dict | None) -> dict[str, Any]:
     }
 
 
+def _compact(view: dict[str, Any]) -> dict[str, Any]:
+    """The status-only shape for LLM callers (Sazed tools, MCP): full views carry env_keys and
+    health config, which is ~4K tokens across the registry for a question like "is it all up?"."""
+    live, state = view["live"] or {}, view["state"] or {}
+    return {
+        "id": view["id"],
+        "name": view["name"],
+        "group": view["group"],
+        "container": view["container"],
+        "lifecycle": view["lifecycle"],
+        "up": live.get("up"),
+        "detail": live.get("detail"),
+        "since": state.get("since"),
+        "in_maintenance": state.get("in_maintenance"),
+        "muted": state.get("muted"),
+        "notes": state.get("notes") or None,
+    }
+
+
 @router.get("/services")
-async def list_services(group: str | None = Query(None, pattern="^(sazed|apps|infra)$")):
-    """Every registry service with live health and console state, plus an up/down summary."""
+async def list_services(
+    group: str | None = Query(None, pattern="^(sazed|apps|infra)$"),
+    compact: bool = False,
+):
+    """Every registry service with live health and console state, plus an up/down summary.
+    `compact=true` returns status fields only (for LLM tools)."""
     latest, last_cycle, running = service_health.snapshot()
     states = await service_health.get_states()
     services = [s for s in load_registry() if group is None or s.group == group]
     views = [_view(s, latest, states) for s in services]
     checked = [v for v in views if v["lifecycle"] != "planned"]
+    if compact:
+        views = [_compact(v) for v in views]
     return {
         "poller_running": running,
         "last_cycle_at": last_cycle,
