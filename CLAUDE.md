@@ -92,6 +92,16 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
   - `GET /journal/summary` — entries grouped by date with stats; takes `category`, `subcategory`, `period` (`week` | `month` | `last_week` | `last_month`), or explicit date range
   - `GET /journal/export` — markdown or plain text export with the same filters as `/summary`
 
+- `homelab.py` — Proxmox host and container status plus power actions (requires `PROXMOX_HOST`, `PROXMOX_READ_TOKEN`; actions need `PROXMOX_POWER_TOKEN`; `PROXMOX_CA_CERT` points at `pve-root-ca.pem`). Uses its own httpx client because Proxmox has its own CA. Which containers can be started/restarted is decided by the power token's Proxmox ACLs, not by this service; a Proxmox 403 is returned as 403.
+  - `GET /homelab/host` — CPU, memory, root disk, uptime, storage pools
+  - `GET /homelab/containers` — all LXC containers with status and usage
+  - `GET /homelab/containers/{vmid}` — status, key config, recent start/stop/reboot history
+  - `POST /homelab/containers/{vmid}/restart`, `POST /homelab/containers/{vmid}/start`
+
+### MCP (`app/mcp_server.py`)
+
+Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON responses) mounted at `/mcp/` (trailing slash). Tools wrap the router functions directly so MCP and REST share one code path and the same limits. The API key is checked by an ASGI guard around the mounted app, since FastAPI dependencies don't reach mounts. The session manager runs inside the FastAPI lifespan. Clients connect at `https://sazed.tail77c590.ts.net/gw/mcp/` (Caddy on CT 106 injects the key). Current tools: `homelab_overview`, `homelab_container`, `homelab_restart_container`, `homelab_start_container`.
+
 **Stub / not yet implemented:**
 - `context.py` — `GET /context/now` returns placeholder; aggregated context snapshot not built yet
 - `webhooks.py` — `POST /webhooks/ingest` accepts payloads but source-specific handling not implemented

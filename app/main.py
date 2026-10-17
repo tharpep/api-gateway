@@ -15,6 +15,8 @@ from app.config import settings
 from app.dependencies import verify_api_key
 from app.http_client import shutdown as http_client_shutdown
 from app.http_client import startup as http_client_startup
+from app.mcp_server import build_app as build_mcp_app
+from app.mcp_server import mcp as mcp_server
 from app.migrations import run_migrations
 from app.routers import (
     ai,
@@ -24,6 +26,7 @@ from app.routers import (
     finance,
     github,
     health,
+    homelab,
     journal,
     kb,
     multi_search,
@@ -71,7 +74,8 @@ async def lifespan(_: FastAPI):
     else:
         logger.info("DATABASE_URL not set; skipping migrations")
 
-    yield
+    async with mcp_server.session_manager.run():
+        yield
 
     await http_client_shutdown()
 
@@ -138,6 +142,12 @@ app.include_router(
 app.include_router(
     journal.router, prefix="/journal", tags=["journal"], dependencies=[Depends(verify_api_key)]
 )
+app.include_router(
+    homelab.router, prefix="/homelab", tags=["homelab"], dependencies=[Depends(verify_api_key)]
+)
+
+# MCP (streamable HTTP) at /mcp/ — API key enforced inside build_mcp_app()
+app.mount("/mcp", build_mcp_app())
 app.include_router(
     places.router, prefix="/places", tags=["places"], dependencies=[Depends(verify_api_key)]
 )

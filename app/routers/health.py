@@ -37,6 +37,7 @@ class IntegrationsResponse(BaseModel):
     pushover: IntegrationStatus
     anthropic: IntegrationStatus
     openrouter: IntegrationStatus
+    proxmox: IntegrationStatus
 
 
 ENDPOINTS = [
@@ -51,6 +52,7 @@ ENDPOINTS = [
     EndpointInfo(path="/kb", description="Knowledge base search and sync", provider="KB service"),
     EndpointInfo(path="/context", description="Aggregated context snapshot"),
     EndpointInfo(path="/webhooks", description="Webhook ingestion and normalization"),
+    EndpointInfo(path="/homelab", description="Host and container status", provider="Proxmox"),
 ]
 
 
@@ -100,6 +102,22 @@ def _check_openrouter() -> IntegrationStatus:
     )
 
 
+def _check_proxmox() -> IntegrationStatus:
+    if not settings.proxmox_host or not settings.proxmox_read_token:
+        return IntegrationStatus(connected=False, status="host or read token not configured")
+    if not settings.proxmox_power_token:
+        return IntegrationStatus(
+            connected=True,
+            status="read-only (no power token)",
+            last_check=datetime.now(timezone.utc).isoformat(),
+        )
+    return IntegrationStatus(
+        connected=True,
+        status="ok",
+        last_check=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
     uptime = (datetime.now(timezone.utc) - _startup_time).total_seconds()
@@ -124,4 +142,5 @@ async def get_integrations():
         pushover=_check_pushover(),
         anthropic=_check_anthropic(),
         openrouter=_check_openrouter(),
+        proxmox=_check_proxmox(),
     )

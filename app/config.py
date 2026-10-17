@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     bluesky_identifier: str = ""    # reserved for future authenticated ops; search is public
     bluesky_app_password: str = ""  # reserved for future authenticated ops
 
+    # Proxmox (homelab router). Tokens are "user@realm!tokenid=secret". The read token is
+    # PVEAuditor-only; the power token holds VM.PowerMgmt on allowed containers, so Proxmox ACLs
+    # (not this service) decide which containers can be restarted.
+    proxmox_host: str = ""
+    proxmox_node: str = "pve"
+    proxmox_ca_cert: str = ""  # path to pve-root-ca.pem; empty = system trust store
+    proxmox_read_token: str = ""
+    proxmox_power_token: str = ""
+
     # Observability — error tracking (Sentry). Empty DSN = fully disabled, no-op;
     # nothing to configure unless/until a Sentry project exists.
     sentry_dsn: str = ""
