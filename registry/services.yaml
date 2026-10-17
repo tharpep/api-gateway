@@ -1,0 +1,249 @@
+# Service registry: what runs in the homelab and how to check it.
+#
+# Definitions only. Runtime state (health history, outages, maintenance/mute, notes) lives in
+# Postgres, keyed by `id`, so removing an entry here just orphans its state rows (ignored).
+# Edit this file when you add, move or retire a service; the gateway serves it at
+# GET /homelab/services and the health poller reads it every cycle.
+#
+# Fields
+#   id          stable key (never rename; state rows hang off it)
+#   name        display name
+#   group       sazed | apps | infra   (console grouping)
+#   container   Proxmox VMID it runs in (null for the host itself)
+#   lifecycle   active | planned | retiring   (planned is listed but not checked)
+#   description one line
+#   open_url    where a person opens it, if anywhere (tailnet or LAN)
+#   health      how the poller checks it, from CT 104:
+#                 {type: http, url}      2xx/3xx = up
+#                 {type: tcp, host, port}
+#                 {type: container}      Proxmox reports the container running
+#                 {type: proxmox_host}
+#               Every check also requires its container to be running.
+#   depends_on  ids this needs (drives the generated architecture diagram)
+#   repo        GitHub repo, if it's ours
+#   env_keys    config keys it needs (names only; documents secrets, never values)
+#
+# IPs: containers are on DHCP, so LAN addresses live here and in the Caddyfile only.
+
+services:
+  # --- Infrastructure -------------------------------------------------------------------
+  - id: proxmox
+    name: Proxmox host
+    group: infra
+    container: null
+    lifecycle: active
+    description: pve, i5-3550, 15 GB RAM; runs every container
+    open_url: https://192.168.50.111:8006
+    health: {type: proxmox_host}
+
+  - id: postgres
+    name: Postgres
+    group: infra
+    container: 103
+    lifecycle: active
+    description: PG 18 + pgvector; one database per Sazed service
+    health: {type: tcp, host: 192.168.50.205, port: 5432}
+
+  - id: claude-code
+    name: Claude Code host
+    group: infra
+    container: 108
+    lifecycle: active
+    description: Claude Code Remote Control host (optiplex)
+    health: {type: container}
+
+  # --- Sazed system ---------------------------------------------------------------------
+  - id: sazed-console
+    name: Sazed console
+    group: sazed
+    container: 106
+    lifecycle: active
+    description: Caddy edge + web UI; injects API keys for tailnet clients
+    open_url: https://sazed.tail77c590.ts.net
+    health: {type: container}  # Caddy listens on localhost only; sazed below covers the app
+    depends_on: [sazed, api-gateway]
+    repo: tharpep/sazed-frontend
+
+  - id: sazed
+    name: Sazed agent
+    group: sazed
+    container: 106
+    lifecycle: active
+    description: Agent loop, memory, tools (Haiku 5.5 / Sonnet 5.5)
+    health: {type: http, url: http://192.168.50.155:8000/health}
+    depends_on: [api-gateway, postgres]
+    repo: tharpep/sazed
+    env_keys: [API_KEY, GATEWAY_URL, GATEWAY_API_KEY, ANTHROPIC_API_KEY, DATABASE_URL]
+
+  - id: api-gateway
+    name: API gateway
+    group: sazed
+    container: 104
+    lifecycle: active
+    description: Every outside API, /homelab, /mcp
+    health: {type: http, url: http://192.168.50.63:8000/health}
+    depends_on: [postgres, knowledge-base, proxmox]
+    repo: tharpep/api-gateway
+    env_keys:
+      - API_KEY
+      - KB_SERVICE_URL
+      - KB_SERVICE_KEY
+      - DATABASE_URL
+      - ANTHROPIC_API_KEY
+      - GOOGLE_CLIENT_ID
+      - GOOGLE_CLIENT_SECRET
+      - GOOGLE_REFRESH_TOKEN
+      - GOOGLE_REDIRECT_URI
+      - PUSHOVER_USER_KEY
+      - PUSHOVER_API_TOKEN
+      - TAVILY_API_KEY
+      - GITHUB_TOKEN
+      - GNEWS_API_KEY
+      - GOOGLE_MAPS_API_KEY
+      - PROXMOX_HOST
+      - PROXMOX_READ_TOKEN
+      - PROXMOX_POWER_TOKEN
+      - PROXMOX_CA_CERT
+
+  - id: knowledge-base
+    name: Knowledge base
+    group: sazed
+    container: 105
+    lifecycle: active
+    description: RAG index (pgvector + Voyage)
+    health: {type: http, url: http://192.168.50.139:8000/health/}
+    depends_on: [postgres]
+    repo: tharpep/knowledge-base
+    env_keys: [API_KEY, API_GATEWAY_URL, API_GATEWAY_KEY, DATABASE_URL, VOYAGE_API_KEY]
+
+  - id: automations
+    name: Automations
+    group: sazed
+    container: 107
+    lifecycle: active
+    description: Scheduler (no listening port yet; v2 will run rows from Postgres)
+    health: {type: container}
+    depends_on: [api-gateway, sazed]
+    repo: tharpep/automations
+    env_keys: [API_GATEWAY_URL, API_GATEWAY_KEY, SAZED_URL, SAZED_API_KEY]
+
+  - id: vault
+    name: Obsidian vault
+    group: sazed
+    container: 109
+    lifecycle: planned
+    description: LiveSync + CouchDB + vault service (plan 05)
+    depends_on: []
+
+  - id: home-lab-dashboard
+    name: Home lab dashboard
+    group: infra
+    container: 102
+    lifecycle: retiring
+    description: Superseded by the console's Homelab page
+    open_url: https://home-lab-dashboard.tail77c590.ts.net
+    health: {type: container}  # Next.js listens on localhost only
+    repo: tharpep/home-lab-dashboard
+
+  # --- Apps -----------------------------------------------------------------------------
+  - id: chat-service
+    name: SillyTavern
+    group: apps
+    container: 101
+    lifecycle: active
+    description: SillyTavern + Ollama
+    open_url: https://chat-service.tail77c590.ts.net
+    health: {type: container}  # localhost only behind tailscale serve
+
+  - id: jellyfin
+    name: Jellyfin
+    group: apps
+    container: 100
+    lifecycle: active
+    description: Media server
+    open_url: http://192.168.50.117:8096
+    health: {type: http, url: http://192.168.50.117:8096/health}
+
+  - id: jellyseerr
+    name: Jellyseerr
+    group: apps
+    container: 100
+    lifecycle: active
+    description: Media requests
+    open_url: http://192.168.50.117:5055
+    health: {type: http, url: http://192.168.50.117:5055/api/v1/status}
+    depends_on: [jellyfin, radarr, sonarr]
+
+  - id: radarr
+    name: Radarr
+    group: apps
+    container: 100
+    lifecycle: active
+    description: Movies
+    open_url: http://192.168.50.117:7878
+    health: {type: http, url: http://192.168.50.117:7878/ping}
+    depends_on: [prowlarr, qbittorrent]
+
+  - id: sonarr
+    name: Sonarr
+    group: apps
+    container: 100
+    lifecycle: active
+    description: TV
+    open_url: http://192.168.50.117:8989
+    health: {type: http, url: http://192.168.50.117:8989/ping}
+    depends_on: [prowlarr, qbittorrent]
+
+  - id: prowlarr
+    name: Prowlarr
+    group: apps
+    container: 100
+    lifecycle: active
+    description: Indexers
+    open_url: http://192.168.50.117:9696
+    health: {type: http, url: http://192.168.50.117:9696/ping}
+    depends_on: [flaresolverr]
+
+  - id: qbittorrent
+    name: qBittorrent
+    group: apps
+    container: 100
+    lifecycle: active
+    description: Downloads, routed through the gluetun VPN container
+    open_url: http://192.168.50.117:8080
+    health: {type: http, url: http://192.168.50.117:8080/}
+
+  - id: flaresolverr
+    name: FlareSolverr
+    group: apps
+    container: 100
+    lifecycle: active
+    description: Cloudflare challenge solver for Prowlarr
+    health: {type: http, url: http://192.168.50.117:8191/}
+
+  - id: kavita
+    name: Kavita
+    group: apps
+    container: 100
+    lifecycle: active
+    description: Books and comics
+    open_url: http://192.168.50.117:5000
+    health: {type: http, url: http://192.168.50.117:5000/api/health}
+
+  - id: suwayomi
+    name: Suwayomi
+    group: apps
+    container: 100
+    lifecycle: active
+    description: Manga (primary)
+    open_url: http://192.168.50.117:4567
+    health: {type: http, url: http://192.168.50.117:4567/}
+
+  - id: suwayomi-second
+    name: Suwayomi (second)
+    group: apps
+    container: 100
+    lifecycle: active
+    description: Manga (second instance, own VPN)
+    open_url: http://192.168.50.117:4568
+    health: {type: http, url: http://192.168.50.117:4568/}

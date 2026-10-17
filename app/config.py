@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     proxmox_read_token: str = ""
     proxmox_power_token: str = ""
 
+    # Service registry + health poller. The poller starts only where PROXMOX_HOST is set (the
+    # homelab), so other deployments of this code don't poll a LAN they can't reach.
+    registry_path: str = ""  # empty = registry/services.yaml in the repo
+    health_poll_seconds: int = 60
+
     # Observability — error tracking (Sentry). Empty DSN = fully disabled, no-op;
     # nothing to configure unless/until a Sentry project exists.
     sentry_dsn: str = ""

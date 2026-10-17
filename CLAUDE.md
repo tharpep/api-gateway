@@ -98,9 +98,18 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
   - `GET /homelab/containers/{vmid}` — status, key config, recent start/stop/reboot history
   - `POST /homelab/containers/{vmid}/restart`, `POST /homelab/containers/{vmid}/start`
 
+### Service registry + health poller (`registry/services.yaml`, `app/registry.py`, `app/service_health.py`, `app/routers/services.py`)
+
+Hybrid by design: service **definitions** live in `registry/services.yaml` (git; field docs in the file header), and **runtime state** lives in Postgres (`service_state`, `service_events`, migration 003). `app/registry.py` validates the YAML and re-reads it when its mtime changes, keeping the last good version if an edit is invalid. `app/service_health.py` polls every `HEALTH_POLL_SECONDS` (default 60), only where `PROXMOX_HOST` is set. Check types are http, tcp, container and proxmox_host, with one Proxmox container snapshot per cycle. Latest results are held in memory, so the endpoints keep working when Postgres is down. Down needs 2 consecutive failures; up needs 1 success. Transitions are written to `service_events`.
+  - `GET /homelab/services?group=` — definitions + `live` (in-memory) + `state` (DB; null if unavailable) + up/down summary
+  - `GET /homelab/services/{id}` — plus recent up/down events
+  - `PATCH /homelab/services/{id}/state` — `{maintenance_minutes (0 ends), muted, notes}`; omitted fields unchanged
+
+To add a service: add an entry to `registry/services.yaml` and deploy. Never rename an `id`, because state rows hang off it.
+
 ### MCP (`app/mcp_server.py`)
 
-Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON responses) mounted at `/mcp/` (trailing slash). Tools wrap the router functions directly so MCP and REST share one code path and the same limits. The API key is checked by an ASGI guard around the mounted app, since FastAPI dependencies don't reach mounts. The session manager runs inside the FastAPI lifespan. Clients connect at `https://sazed.tail77c590.ts.net/gw/mcp/` (Caddy on CT 106 injects the key). Current tools: `homelab_overview`, `homelab_container`, `homelab_restart_container`, `homelab_start_container`.
+Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON responses) mounted at `/mcp/` (trailing slash). Tools wrap the router functions directly so MCP and REST share one code path and the same limits. The API key is checked by an ASGI guard around the mounted app, since FastAPI dependencies don't reach mounts. The session manager runs inside the FastAPI lifespan. Clients connect at `https://sazed.tail77c590.ts.net/gw/mcp/` (Caddy on CT 106 injects the key). Current tools: `homelab_overview`, `homelab_services`, `homelab_container`, `homelab_restart_container`, `homelab_start_container`.
 
 **Stub / not yet implemented:**
 - `context.py` — `GET /context/now` returns placeholder; aggregated context snapshot not built yet

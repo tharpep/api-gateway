@@ -13,7 +13,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
 from app.dependencies import verify_api_key
-from app.routers import homelab
+from app.routers import homelab, services
 
 mcp = FastMCP(
     "sazed-gateway",
@@ -46,6 +46,32 @@ async def homelab_overview() -> dict:
     return {
         "host": await _call(homelab.host_status()),
         "containers": await _call(homelab.list_containers()),
+    }
+
+
+@mcp.tool()
+async def homelab_services(group: str | None = None) -> dict:
+    """Health of every registered service (Sazed system, apps, infra): up/down, detail,
+    since when, and maintenance/mute state. Optional group: sazed | apps | infra."""
+    result = await _call(services.list_services(group))
+    compact = [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "group": s["group"],
+            "container": s["container"],
+            "lifecycle": s["lifecycle"],
+            "up": (s["live"] or {}).get("up"),
+            "detail": (s["live"] or {}).get("detail"),
+            "since": (s["state"] or {}).get("since"),
+            "in_maintenance": (s["state"] or {}).get("in_maintenance"),
+        }
+        for s in result["services"]
+    ]
+    return {
+        "summary": result["summary"],
+        "last_cycle_at": result["last_cycle_at"],
+        "services": compact,
     }
 
 

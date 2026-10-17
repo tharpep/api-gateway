@@ -11,6 +11,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from app import service_health
 from app.config import settings
 from app.dependencies import verify_api_key
 from app.http_client import shutdown as http_client_shutdown
@@ -33,6 +34,7 @@ from app.routers import (
     notify,
     places,
     search,
+    services,
     sheets,
     storage,
     tasks,
@@ -74,9 +76,12 @@ async def lifespan(_: FastAPI):
     else:
         logger.info("DATABASE_URL not set; skipping migrations")
 
+    service_health.start()  # no-op unless PROXMOX_HOST is set (homelab only)
+
     async with mcp_server.session_manager.run():
         yield
 
+    await service_health.stop()
     await http_client_shutdown()
 
 
@@ -144,6 +149,9 @@ app.include_router(
 )
 app.include_router(
     homelab.router, prefix="/homelab", tags=["homelab"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    services.router, prefix="/homelab", tags=["homelab"], dependencies=[Depends(verify_api_key)]
 )
 
 # MCP (streamable HTTP) at /mcp/ — API key enforced inside build_mcp_app()
