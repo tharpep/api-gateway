@@ -33,7 +33,7 @@ from .models import (
     RedditSearchRequest,
     UnifiedResult,
 )
-from .signals import compute_corroboration
+from .signals import compute_corroboration, matches_query, query_terms
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +244,17 @@ async def aggregate_search(body: AggregateSearchRequest) -> AggregateSearchRespo
             logger.warning("Platform %s error during aggregate: %s", platform, result_or_exc)
             continue
         all_results.extend(result_or_exc)
+
+    # Platform search is loose (HN/Algolia and RSS match single words), so keep only results
+    # that contain the query's key terms before clustering; otherwise a shared word like
+    # "release" clusters unrelated stories together.
+    terms = query_terms(body.query)
+    before = len(all_results)
+    all_results = [
+        r for r in all_results if matches_query(f"{r.title} {r.content_snippet}", terms)
+    ]
+    if before != len(all_results):
+        logger.debug("aggregate: dropped %d off-topic results", before - len(all_results))
 
     # 4. Apply fact check hits to all results (query-level signal)
     if fact_checks:

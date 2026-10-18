@@ -24,7 +24,7 @@ from app.config import settings
 from app.http_client import get_client
 
 from .models import UnifiedResult
-from .signals import compute_signals
+from .signals import compute_signals, matches_query, query_terms
 
 logger = logging.getLogger(__name__)
 
@@ -500,7 +500,7 @@ def _parse_rss_feed(content: bytes, feed_url: str, query_terms: list[str]) -> li
                 title = (at("title") or "").strip()
                 summary = at("summary") or at("content") or ""
                 combined = f"{title} {summary}".lower()
-                if not any(term in combined for term in query_terms):
+                if not matches_query(combined, query_terms):
                     continue
 
                 link_el = entry.find(f"{{{_ATOM_NS}}}link") or entry.find("link")
@@ -533,7 +533,7 @@ def _parse_rss_feed(content: bytes, feed_url: str, query_terms: list[str]) -> li
                 title = (item.findtext("title") or "").strip()
                 desc = item.findtext("description") or ""
                 combined = f"{title} {desc}".lower()
-                if not any(term in combined for term in query_terms):
+                if not matches_query(combined, query_terms):
                     continue
 
                 link = (item.findtext("link") or "").strip()
@@ -585,11 +585,11 @@ async def search_custom_rss(
     if not feed_urls:
         return []
 
-    query_terms = [t.lower() for t in query.split() if len(t) > 2]
+    terms = query_terms(query)
     since_dt = _since_ts(since)
 
     per_feed = await asyncio.gather(
-        *[_fetch_one_rss(get_client(), url, query_terms) for url in feed_urls],
+        *[_fetch_one_rss(get_client(), url, terms) for url in feed_urls],
         return_exceptions=True,
     )
 

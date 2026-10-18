@@ -222,6 +222,43 @@ def compute_signals(result: UnifiedResult) -> UnifiedResult:
 # Corroboration clustering
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Query relevance
+# ---------------------------------------------------------------------------
+
+_STOPWORDS: frozenset[str] = frozenset(
+    "the and for are but not you all any can had her was one our out has have how its may new now "
+    "old see two way who did get got him his let put say she too use what when where which why "
+    "with from that this they them then than been into more most some such will would about "
+    "after before over under latest news update updates".split()
+)
+
+
+def query_terms(query: str) -> list[str]:
+    """The words a result has to contain: 3+ characters, not filler words."""
+    words = re.findall(r"[a-z0-9][a-z0-9.+#-]*", query.lower())
+    return [w for w in words if len(w) >= 3 and w not in _STOPWORDS]
+
+
+def _stem(term: str) -> str:
+    # Crude, on purpose: "release" also matches "released"/"releases"; "proxmox" stays whole.
+    return term[: max(5, len(term) - 3)] if len(term) > 6 else term
+
+
+def matches_query(text: str, terms: list[str]) -> bool:
+    """True when `text` contains enough of the query's terms.
+
+    Up to three terms: all of them. More: two thirds. A single shared word like "release" is
+    what used to let unrelated stories through.
+    """
+    if not terms:
+        return True
+    haystack = text.lower()
+    hits = sum(1 for t in terms if _stem(t) in haystack)
+    needed = len(terms) if len(terms) <= 3 else -(-2 * len(terms) // 3)
+    return hits >= needed
+
+
 _CORROBORATION_THRESHOLD = 0.55
 
 
