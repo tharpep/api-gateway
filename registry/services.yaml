@@ -60,7 +60,9 @@ services:
     lifecycle: active
     description: Caddy edge + web UI; injects API keys for tailnet clients
     open_url: https://sazed.tail77c590.ts.net
-    health: {type: container}  # Caddy listens on localhost only; sazed below covers the app
+    # LAN-only Caddy site that serves just the live release's index.html (404 if a deploy left
+    # `current` dangling, which once blanked the console with no alert).
+    health: {type: http, url: http://192.168.50.155:8081/healthz}
     depends_on: [sazed, api-gateway]
     repo: tharpep/sazed-frontend
 
