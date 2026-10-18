@@ -64,7 +64,7 @@ ENDPOINTS = [
         provider="GNews, Reddit, HN, Bluesky, RSS",
     ),
     EndpointInfo(path="/github", description="Repos, issues, PRs, code", provider="GitHub"),
-    EndpointInfo(path="/kb", description="Knowledge base search and sync", provider="KB service"),
+    EndpointInfo(path="/kb", description="Knowledge base search, uploads and sources", provider="KB service"),
     EndpointInfo(path="/journal", description="Work contribution journal", provider="Postgres"),
     EndpointInfo(path="/finance", description="Subscriptions, budget, bills", provider="Postgres"),
     EndpointInfo(path="/notify", description="Push notifications", provider="Pushover"),

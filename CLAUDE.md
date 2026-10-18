@@ -77,11 +77,10 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
   - Folder IDs are cached indefinitely; the subfolder list is cached for 5 minutes.
 - `kb.py` — proxy to the knowledge-base service (requires `KB_SERVICE_URL`; optional `KB_SERVICE_KEY`):
   - `POST /kb/search` — hybrid KB search
-  - `POST /kb/sync` — trigger Drive → KB sync (optional `force=true`)
-  - `GET /kb/sources` — list tracked KB source files
-  - `GET /kb/files` — list indexed files with chunk counts
-  - `GET /kb/stats` — chunk and file counts
-  - `DELETE /kb/files/{drive_file_id}` — remove a file from the index
+  - `POST /kb/ingest/file` (multipart upload), `POST /kb/ingest/text`, `POST /kb/ingest/url` — add content (Drive sync was removed 2026-10-18)
+  - `GET /kb/sources` — list sources, newest first; `GET /kb/sources/{file_id}/content` — full text
+  - `GET /kb/index`, `GET /kb/files`, `GET /kb/stats`
+  - `DELETE /kb/files/{file_id}` — remove a source and its stored text
   - `DELETE /kb` — clear entire KB index
 - `journal.py` — daily contributions log backed by Postgres `journal_entries`. Two-level taxonomy: `category` (`career` | `personal`, defaults to `career`) and `subcategory` (free-form, e.g. `eli-lilly`). Schema is owned by `app/migrations/`.
   - `GET /journal/entries` — list with filters `category`, `subcategory`, `tag`, `q` (ILIKE on title+body), `start_date`, `end_date`, `limit`, `cursor`. Returns `{entries, next_cursor}`. `project=` accepted as deprecated alias for `subcategory`.

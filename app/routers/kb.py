@@ -12,7 +12,7 @@ from app.http_client import get_client
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 120.0  # sync can be slow on large Drive folders
+_TIMEOUT = 120.0  # a large upload is parsed, summarized and embedded before the KB replies
 
 
 def _kb_url(path: str) -> str:
@@ -60,12 +60,6 @@ async def kb_search(request: Request):
     return await _proxy(request, "POST", "/kb/search")
 
 
-@router.post("/sync")
-async def kb_sync(request: Request):
-    """Trigger a Drive → KB sync (proxied to KB service)."""
-    return await _proxy(request, "POST", "/kb/sync")
-
-
 @router.get("/index")
 async def kb_index(request: Request):
     """List all active KB sources with summaries (proxied to KB service)."""
@@ -90,10 +84,10 @@ async def kb_stats(request: Request):
     return await _proxy(request, "GET", "/kb/stats")
 
 
-@router.delete("/files/{drive_file_id}", status_code=204)
-async def kb_delete_file(drive_file_id: str, request: Request):
-    """Remove a file from the KB index (proxied to KB service)."""
-    return await _proxy(request, "DELETE", f"/kb/files/{drive_file_id}")
+@router.delete("/files/{file_id}", status_code=204)
+async def kb_delete_file(file_id: str, request: Request):
+    """Remove a source (chunks and stored text) from the KB (proxied to KB service)."""
+    return await _proxy(request, "DELETE", f"/kb/files/{file_id}")
 
 
 @router.delete("", status_code=204)
@@ -102,9 +96,15 @@ async def kb_clear(request: Request):
     return await _proxy(request, "DELETE", "/kb")
 
 
+@router.post("/ingest/file", status_code=201)
+async def kb_ingest_file(request: Request):
+    """Upload a document into the KB; the multipart body passes through untouched (proxied)."""
+    return await _proxy(request, "POST", "/kb/ingest/file")
+
+
 @router.post("/ingest/text", status_code=201)
 async def kb_ingest_text(request: Request):
-    """Directly ingest text content into the KB, no Drive file required (proxied to KB service)."""
+    """Directly ingest text content into the KB (proxied to KB service)."""
     return await _proxy(request, "POST", "/kb/ingest/text")
 
 
