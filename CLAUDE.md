@@ -121,6 +121,16 @@ The bot is `sazed-worker-tharpep[bot]`, set by `GITHUB_APP_ID` and `GITHUB_APP_K
 - **Why a bot:** it has no admin bypass and can't approve its own PRs, so merges stay with Pryce.
 - **Your token stays for your own operations:** Sazed's `create_issue` and comment tools use these bot routes; the PAT routes under `/github` are still Pryce's own identity.
 
+### Activity feed (`app/activity.py`)
+
+An in-memory ring buffer (2,000 events) of what the gateway does on its own:
+- every Pushover sent, Sazed's included (`notify.send_pushover`);
+- outage and recovery transitions (`service_health`), muted ones included;
+- disk and failed-deploy alerts;
+- MCP tool calls, recorded by wrapping `mcp.tool` with name, args, outcome and duration.
+
+`GET /activity/events?after=<seq>&boot=<id>` serves it. Sazed polls it every 10 s into its Activity timeline. A restart changes `boot`, and Sazed then takes everything still buffered. There's deliberately no migration (the shared GCP migration counter).
+
 ### MCP (`app/mcp_server.py`)
 
 Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON responses) mounted at `/mcp/` (trailing slash). Tools wrap the router functions directly so MCP and REST share one code path and the same limits. The API key is checked by an ASGI guard around the mounted app, since FastAPI dependencies don't reach mounts. The session manager runs inside the FastAPI lifespan. Clients connect at `https://sazed.tail77c590.ts.net/gw/mcp/` (Caddy on CT 106 injects the key). Current tools: `homelab_overview`, `homelab_services`, `homelab_container`, `homelab_restart_container`, `homelab_start_container`, plus the worker job tools (plans/07): `research`, `second_opinion`, `delegate_code_task`, `continue_job`, `job_status`, `list_jobs`. Those call Sazed's `/jobs` API (`SAZED_URL`, `SAZED_API_KEY`) with requested_by `mcp`: uncapped, and code tasks wait for approval in the console. Research and second opinions wait up to 50 s, then return a job_id.
