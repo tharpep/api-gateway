@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # homelab), so other deployments of this code don't poll a LAN they can't reach.
     registry_path: str = ""  # empty = registry/services.yaml in the repo
     health_poll_seconds: int = 60
+    # Deterministic Pushover alerts from the health poller (homelab only: the poller needs
+    # PROXMOX_HOST). See app/alerts.py.
+    alerts_enabled: bool = True
+    alert_disk_percent: int = 85  # alert at or above; re-arms below this minus 5
+    alert_deploy_poll_seconds: int = 300
+    console_url: str = "https://sazed.tail77c590.ts.net"
 
     # Observability — error tracking (Sentry). Empty DSN = fully disabled, no-op;
     # nothing to configure unless/until a Sentry project exists.

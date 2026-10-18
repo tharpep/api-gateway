@@ -20,6 +20,7 @@ import asyncpg
 import httpx
 from fastapi import HTTPException
 
+from app import alerts
 from app.config import settings
 from app.http_client import get_client
 from app.registry import ServiceDef, load_registry
@@ -164,12 +165,22 @@ async def _check(svc: ServiceDef, containers: dict[int, str] | None, host_ok: bo
 # ---------------------------------------------------------------- poll cycle
 
 
-async def _proxmox_snapshot() -> tuple[dict[int, str] | None, bool]:
+async def _proxmox_snapshot() -> tuple[dict[int, str] | None, bool, list[dict] | None]:
+    """(status by vmid, host reachable, full container summaries for the disk check)."""
     try:
         containers = await homelab.list_containers()
     except HTTPException:
-        return None, False
-    return {c["vmid"]: c["status"] for c in containers}, True
+        return None, False, None
+    return {c["vmid"]: c["status"] for c in containers}, True, containers
+
+
+async def _seed_from_db() -> None:
+    """Start from the last confirmed status in Postgres, so a restart neither logs nor alerts
+    a fake transition, and one failed check right after a restart doesn't mark a service down."""
+    states = await get_states()
+    for service_id, row in (states or {}).items():
+        if row.get("up") is not None:
+            _latest[service_id] = {"up": row["up"], "fail_streak": 0, "seeded": False}
 
 
 def _record(svc: ServiceDef, ok: bool | None, detail: str, latency_ms: int | None):
@@ -256,22 +267,50 @@ async def _persist(changes: list[tuple[ServiceDef, bool | None, bool | None]]) -
 async def poll_once() -> None:
     global _last_cycle_at
     services = [s for s in load_registry() if s.lifecycle != "planned" and s.health]
-    containers, host_ok = await _proxmox_snapshot()
+    containers, host_ok, container_rows = await _proxmox_snapshot()
     results = await asyncio.gather(*(_check(s, containers, host_ok) for s in services))
     changes = []
+    transitions = []
     for svc, (ok, detail, latency_ms) in zip(services, results):
         previous, current = _record(svc, ok, detail, latency_ms)
         if svc.container and containers is not None:
             _latest[svc.id]["container_status"] = containers.get(svc.container, "missing")
         changes.append((svc, previous, current))
+        if previous is not None and current is not None and current != previous:
+            transitions.append((svc, current, detail))
     _last_cycle_at = datetime.now(UTC)
     try:
         await _persist(changes)
     except Exception:
         logger.warning("Service state persist failed (results kept in memory)", exc_info=True)
 
+    await _run_alerts(transitions, container_rows)
+
+
+async def _run_alerts(transitions: list, container_rows: list[dict] | None) -> None:
+    """Alerts never break the poll cycle; each step logs and moves on."""
+    if transitions:
+        try:
+            # Mute and maintenance live in Postgres; if it's down, get_states() returns None
+            # and the alert goes out anyway (Postgres itself may be what's down).
+            await alerts.outages(transitions, await get_states())
+        except Exception:
+            logger.warning("Outage alert failed", exc_info=True)
+    try:
+        await alerts.disks(container_rows)
+    except Exception:
+        logger.warning("Disk alert check failed", exc_info=True)
+    try:
+        await alerts.deploys()
+    except Exception:
+        logger.warning("Deploy alert check failed", exc_info=True)
+
 
 async def _run_forever() -> None:
+    try:
+        await _seed_from_db()
+    except Exception:
+        logger.warning("Could not seed service status from Postgres", exc_info=True)
     while True:
         started = time.monotonic()
         try:

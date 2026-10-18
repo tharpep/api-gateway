@@ -32,9 +32,14 @@ class NotificationResponse(BaseModel):
     request: str
 
 
-@router.post("", response_model=NotificationResponse)
-async def send_notification(notification: NotificationRequest):
-
+async def send_pushover(
+    title: str,
+    message: str,
+    priority: Priority = Priority.NORMAL,
+    url: str | None = None,
+    url_title: str | None = None,
+) -> dict:
+    """Send one Pushover message. Also used by app.alerts for the gateway's own alerts."""
     if not settings.pushover_user_key or not settings.pushover_api_token:
         raise HTTPException(
             status_code=503,
@@ -44,19 +49,19 @@ async def send_notification(notification: NotificationRequest):
     payload = {
         "token": settings.pushover_api_token,
         "user": settings.pushover_user_key,
-        "title": notification.title,
-        "message": notification.message,
-        "priority": notification.priority,
+        "title": title[:250],
+        "message": message[:1024],
+        "priority": int(priority),
     }
 
-    if notification.url:
-        payload["url"] = notification.url
-    if notification.url_title:
-        payload["url_title"] = notification.url_title
+    if url:
+        payload["url"] = url
+    if url_title:
+        payload["url_title"] = url_title
 
-    if notification.priority == Priority.EMERGENCY:
+    if priority == Priority.EMERGENCY:
         payload["retry"] = 60       # Retry every 60 seconds
-        payload["expire"] = 3600   
+        payload["expire"] = 3600
 
     response = await get_client().post(PUSHOVER_API_URL, data=payload)
 
@@ -72,5 +77,16 @@ async def send_notification(notification: NotificationRequest):
             status_code=400,
             detail=f"Pushover rejected: {data.get('errors', 'Unknown error')}"
         )
+    return data
 
+
+@router.post("", response_model=NotificationResponse)
+async def send_notification(notification: NotificationRequest):
+    data = await send_pushover(
+        notification.title,
+        notification.message,
+        notification.priority,
+        notification.url,
+        notification.url_title,
+    )
     return NotificationResponse(status=data["status"], request=data["request"])

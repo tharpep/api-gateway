@@ -106,6 +106,10 @@ Hybrid by design: service **definitions** live in `registry/services.yaml` (git;
 
 To add a service: add an entry to `registry/services.yaml` and deploy. Never rename an `id`, because state rows hang off it.
 
+### Alerts (`app/alerts.py`)
+
+Deterministic Pushover alerts run at the end of each poll cycle (so homelab only), through `notify.send_pushover`. Outages: confirmed down/up transitions, one message per cycle; muted or in-maintenance services are skipped; down is HIGH priority unless every affected service is in the `apps` group; recovery is LOW. Disk: Proxmox storage pools and running containers' root disks at `ALERT_DISK_PERCENT` (85), re-armed 5 points below. Deploys: failed "Deploy to Homelab" runs for active registry repos, checked every `ALERT_DEPLOY_POLL_SECONDS` (300) with the gateway's GitHub token. The poller seeds last-known status from `service_state` at startup, so restarts don't alert. Disk and deploy dedupe are in memory (deliberately no migration: on GCP the gateway and Sazed share one `schema_migrations` version counter). `ALERTS_ENABLED=false` silences all of it. Whole-homelab-down needs an outside dead-man's switch; not set up.
+
 ### MCP (`app/mcp_server.py`)
 
 Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON responses) mounted at `/mcp/` (trailing slash). Tools wrap the router functions directly so MCP and REST share one code path and the same limits. The API key is checked by an ASGI guard around the mounted app, since FastAPI dependencies don't reach mounts. The session manager runs inside the FastAPI lifespan. Clients connect at `https://sazed.tail77c590.ts.net/gw/mcp/` (Caddy on CT 106 injects the key). Current tools: `homelab_overview`, `homelab_services`, `homelab_container`, `homelab_restart_container`, `homelab_start_container`.
