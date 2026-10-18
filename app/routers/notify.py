@@ -32,6 +32,25 @@ class NotificationResponse(BaseModel):
     request: str
 
 
+# Notifications, not reports: a title has to fit one line on a phone, and the body a glance.
+# Links belong in `url` (a tappable button), not pasted into the text.
+TITLE_MAX = 48
+MESSAGE_MAX = 300
+
+
+def _clamp(text: str, limit: int) -> str:
+    """Shorten to `limit` characters at a word boundary, with an ellipsis."""
+    # Single-line text gets its whitespace tidied; multi-line bodies keep their line breaks.
+    text = text.strip() if "\n" in text else " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    space = cut.rfind(" ")
+    if space > limit * 0.6:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:-") + "…"
+
+
 async def send_pushover(
     title: str,
     message: str,
@@ -49,15 +68,15 @@ async def send_pushover(
     payload = {
         "token": settings.pushover_api_token,
         "user": settings.pushover_user_key,
-        "title": title[:250],
-        "message": message[:1024],
+        "title": _clamp(title, TITLE_MAX),
+        "message": _clamp(message, MESSAGE_MAX) or "(no details)",
         "priority": int(priority),
     }
 
     if url:
         payload["url"] = url
     if url_title:
-        payload["url_title"] = url_title
+        payload["url_title"] = _clamp(url_title, 40)
 
     if priority == Priority.EMERGENCY:
         payload["retry"] = 60       # Retry every 60 seconds
