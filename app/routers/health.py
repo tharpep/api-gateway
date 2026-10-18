@@ -38,21 +38,45 @@ class IntegrationsResponse(BaseModel):
     anthropic: IntegrationStatus
     openrouter: IntegrationStatus
     proxmox: IntegrationStatus
+    tavily: IntegrationStatus
+    github: IntegrationStatus
+    gnews: IntegrationStatus
+    google_maps: IntegrationStatus
+    knowledge_base: IntegrationStatus
+    database: IntegrationStatus
 
 
+# The gateway's capability directory (the console's Gateway page lists it). Keep in step with
+# the routers mounted in app/main.py.
 ENDPOINTS = [
     EndpointInfo(path="/health", description="Gateway status and API directory"),
     EndpointInfo(path="/health/integrations", description="Integration connection status"),
-    EndpointInfo(path="/notify", description="Push notifications", provider="Pushover"),
-    EndpointInfo(path="/ai", description="AI API gateway (OpenAI-compatible)", provider="Anthropic, OpenRouter"),
     EndpointInfo(path="/calendar", description="Calendar events", provider="Google Calendar"),
-    EndpointInfo(path="/tasks", description="Task management", provider="Google Tasks"),
-    EndpointInfo(path="/email", description="Email access", provider="Gmail"),
-    EndpointInfo(path="/storage", description="File and photo storage", provider="Google Drive"),
+    EndpointInfo(path="/tasks", description="Task lists and tasks", provider="Google Tasks"),
+    EndpointInfo(path="/email", description="Read, search and draft email", provider="Gmail"),
+    EndpointInfo(path="/storage", description="Drive files and folders", provider="Google Drive"),
+    EndpointInfo(path="/sheets", description="Spreadsheets", provider="Google Sheets"),
+    EndpointInfo(path="/places", description="Place search and details", provider="Google Maps"),
+    EndpointInfo(path="/search", description="Web search and page fetch", provider="Tavily"),
+    EndpointInfo(
+        path="/multi-search",
+        description="News and social search with bias signals",
+        provider="GNews, Reddit, HN, Bluesky, RSS",
+    ),
+    EndpointInfo(path="/github", description="Repos, issues, PRs, code", provider="GitHub"),
     EndpointInfo(path="/kb", description="Knowledge base search and sync", provider="KB service"),
-    EndpointInfo(path="/context", description="Aggregated context snapshot"),
-    EndpointInfo(path="/webhooks", description="Webhook ingestion and normalization"),
-    EndpointInfo(path="/homelab", description="Host and container status", provider="Proxmox"),
+    EndpointInfo(path="/journal", description="Work contribution journal", provider="Postgres"),
+    EndpointInfo(path="/finance", description="Subscriptions, budget, bills", provider="Postgres"),
+    EndpointInfo(path="/notify", description="Push notifications", provider="Pushover"),
+    EndpointInfo(
+        path="/ai", description="LLM proxy (OpenAI-compatible)", provider="Anthropic, OpenRouter"
+    ),
+    EndpointInfo(
+        path="/homelab", description="Host, containers, service health", provider="Proxmox"
+    ),
+    EndpointInfo(path="/mcp", description="MCP tools for Claude and agy"),
+    EndpointInfo(path="/context", description="Aggregated context snapshot (stub)"),
+    EndpointInfo(path="/webhooks", description="Webhook ingestion (stub)"),
 ]
 
 
@@ -118,6 +142,17 @@ def _check_proxmox() -> IntegrationStatus:
     )
 
 
+def _check_configured(configured: bool, missing: str) -> IntegrationStatus:
+    """Config-presence check for integrations with no richer probe (same as the ones above)."""
+    if not configured:
+        return IntegrationStatus(connected=False, status=missing)
+    return IntegrationStatus(
+        connected=True,
+        status="ok",
+        last_check=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
     uptime = (datetime.now(timezone.utc) - _startup_time).total_seconds()
@@ -143,4 +178,14 @@ async def get_integrations():
         anthropic=_check_anthropic(),
         openrouter=_check_openrouter(),
         proxmox=_check_proxmox(),
+        tavily=_check_configured(bool(settings.tavily_api_key), "api key not configured"),
+        github=_check_configured(bool(settings.github_token), "token not configured"),
+        gnews=_check_configured(bool(settings.gnews_api_key), "api key not configured"),
+        google_maps=_check_configured(
+            bool(settings.google_maps_api_key), "api key not configured"
+        ),
+        knowledge_base=_check_configured(
+            bool(settings.kb_service_url), "KB_SERVICE_URL not configured"
+        ),
+        database=_check_configured(bool(settings.database_url), "DATABASE_URL not configured"),
     )
