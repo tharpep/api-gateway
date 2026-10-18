@@ -110,6 +110,17 @@ To add a service: add an entry to `registry/services.yaml` and deploy. Never ren
 
 Deterministic Pushover alerts run at the end of each poll cycle (so homelab only), through `notify.send_pushover`. Outages: confirmed down/up transitions, one message per cycle; muted or in-maintenance services are skipped; down is HIGH priority unless every affected service is in the `apps` group; recovery is LOW. Disk: Proxmox storage pools and running containers' root disks at `ALERT_DISK_PERCENT` (85), re-armed 5 points below. Deploys: failed "Deploy to Homelab" runs for active registry repos, checked every `ALERT_DEPLOY_POLL_SECONDS` (300) with the gateway's GitHub token. The poller seeds last-known status from `service_state` at startup, so restarts don't alert. Disk and deploy dedupe are in memory (deliberately no migration: on GCP the gateway and Sazed share one `schema_migrations` version counter). `ALERTS_ENABLED=false` silences all of it. Whole-homelab-down needs an outside dead-man's switch; not set up.
 
+### GitHub App bot (`app/routers/github_app.py`, plans/07)
+
+The bot is `sazed-worker-tharpep[bot]`, set by `GITHUB_APP_ID` and `GITHUB_APP_KEY_B64` (the .pem, base64-encoded). Permissions: contents, issues and pull requests write; metadata read. It's installed on all of tharpep's repos except `GITHUB_APP_EXCLUDED_REPOS` (Trusted-Model-Registry, gotenberg-fork), which get a 403.
+- **Tokens:** each call mints an installation token scoped to one repo and only the permissions it needs. Tokens are cached until 5 minutes before they expire. The JWT uses `exp` = now + 300, because CT 104's clock runs about a minute fast and GitHub rejects anything over 10 minutes.
+- **Routes, all under `/github/app`:**
+  - `POST /repos/{owner}/{repo}/issues` and `/issues/{n}/comments` (PR comments too) act as the bot.
+  - `POST /clone-token` returns a read-only token for the worker to clone a private repo.
+  - `POST /pull-request` takes `{repo, branch: sazed/..., title, body, commit_message, files: {path: base64 | null}}`. It builds blobs, tree, commit, ref and PR through the Git Data API (no git push), keeps existing file modes, and refuses `.git/` and `.github/workflows/` paths.
+- **Why a bot:** it has no admin bypass and can't approve its own PRs, so merges stay with Pryce.
+- **Your token stays for your own operations:** Sazed's `create_issue` and comment tools use these bot routes; the PAT routes under `/github` are still Pryce's own identity.
+
 ### MCP (`app/mcp_server.py`)
 
 Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON responses) mounted at `/mcp/` (trailing slash). Tools wrap the router functions directly so MCP and REST share one code path and the same limits. The API key is checked by an ASGI guard around the mounted app, since FastAPI dependencies don't reach mounts. The session manager runs inside the FastAPI lifespan. Clients connect at `https://sazed.tail77c590.ts.net/gw/mcp/` (Caddy on CT 106 injects the key). Current tools: `homelab_overview`, `homelab_services`, `homelab_container`, `homelab_restart_container`, `homelab_start_container`.
