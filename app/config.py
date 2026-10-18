@@ -45,11 +45,7 @@ class Settings(BaseSettings):
     google_maps_api_key: str = ""
 
     # Multi-platform search
-    reddit_client_id: str = ""
-    reddit_client_secret: str = ""
     gnews_api_key: str = ""
-    bluesky_identifier: str = ""    # reserved for future authenticated ops; search is public
-    bluesky_app_password: str = ""  # reserved for future authenticated ops
 
     # Proxmox (homelab router). Tokens are "user@realm!tokenid=secret". The read token is
     # PVEAuditor-only; the power token holds VM.PowerMgmt on allowed containers, so Proxmox ACLs

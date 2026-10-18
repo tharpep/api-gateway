@@ -17,12 +17,10 @@ from app.config import settings
 from .adapters import (
     CUSTOM_RSS_FEEDS,
     fetch_fact_checks,
-    search_bluesky,
     search_custom_rss,
     search_gnews,
     search_google_news_rss,
     search_hn,
-    search_reddit,
 )
 from .models import (
     AggregateSearchRequest,
@@ -30,7 +28,6 @@ from .models import (
     CorroborationCluster,
     PlatformSearchRequest,
     PlatformSearchResponse,
-    RedditSearchRequest,
     UnifiedResult,
 )
 from .signals import compute_corroboration, matches_query, query_terms
@@ -78,22 +75,6 @@ async def search_google_news_rss_endpoint(body: PlatformSearchRequest) -> Platfo
     )
 
 
-@router.post("/bluesky")
-async def search_bluesky_endpoint(body: PlatformSearchRequest) -> PlatformSearchResponse:
-    results = await search_bluesky(
-        query=body.query,
-        max_results=body.max_results,
-        sort=body.sort,
-        since=body.since,
-    )
-    return PlatformSearchResponse(
-        query=body.query,
-        platform="bluesky",
-        total_results=len(results),
-        results=results,
-    )
-
-
 @router.post("/gnews")
 async def search_gnews_endpoint(body: PlatformSearchRequest) -> PlatformSearchResponse:
     if not settings.gnews_api_key:
@@ -107,25 +88,6 @@ async def search_gnews_endpoint(body: PlatformSearchRequest) -> PlatformSearchRe
     return PlatformSearchResponse(
         query=body.query,
         platform="gnews",
-        total_results=len(results),
-        results=results,
-    )
-
-
-@router.post("/reddit")
-async def search_reddit_endpoint(body: RedditSearchRequest) -> PlatformSearchResponse:
-    if not settings.reddit_client_id or not settings.reddit_client_secret:
-        raise HTTPException(503, "Reddit credentials not configured")
-    results = await search_reddit(
-        query=body.query,
-        max_results=body.max_results,
-        sort=body.sort,
-        since=body.since,
-        subreddit=body.subreddit,
-    )
-    return PlatformSearchResponse(
-        query=body.query,
-        platform="reddit",
         total_results=len(results),
         results=results,
     )
@@ -193,20 +155,20 @@ async def aggregate_search(body: AggregateSearchRequest) -> AggregateSearchRespo
     requested = (
         set(body.platforms)
         if body.platforms
-        else {"hn", "google_news_rss", "bluesky", "gnews", "reddit", "rss"}
+        else {"hn", "google_news_rss", "gnews", "rss"}
     )
 
     # GNews unavailable → auto-add google_news_rss as fallback
     if "gnews" in requested and not settings.gnews_api_key:
         requested.add("google_news_rss")
 
-    # Skip platforms that have no credentials configured
+    # Unknown platforms (e.g. reddit/bluesky, removed 2026-10-18) are ignored; so are platforms
+    # with no credentials configured.
+    requested &= {"hn", "google_news_rss", "gnews", "rss"}
     active: list[str] = []
     skipped: list[str] = []
     for p in requested:
-        if p == "reddit" and (not settings.reddit_client_id or not settings.reddit_client_secret):
-            skipped.append(p)
-        elif p == "gnews" and not settings.gnews_api_key:
+        if p == "gnews" and not settings.gnews_api_key:
             skipped.append(p)
         elif p == "rss" and not CUSTOM_RSS_FEEDS:
             skipped.append(p)
@@ -220,9 +182,7 @@ async def aggregate_search(body: AggregateSearchRequest) -> AggregateSearchRespo
     adapter_map = {
         "hn": lambda: search_hn(body.query, body.max_results, body.sort, body.since),
         "google_news_rss": lambda: search_google_news_rss(body.query, body.max_results, body.since),
-        "bluesky": lambda: search_bluesky(body.query, body.max_results, body.sort, body.since),
         "gnews": lambda: search_gnews(body.query, body.max_results, body.sort, body.since),
-        "reddit": lambda: search_reddit(body.query, body.max_results, body.sort, body.since),
         "rss": lambda: search_custom_rss(body.query, body.max_results, body.since),
     }
 

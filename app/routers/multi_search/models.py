@@ -10,10 +10,6 @@ class PlatformSearchRequest(BaseModel):
     since: str | None = None  # ISO 8601 — only return results newer than this
 
 
-class RedditSearchRequest(PlatformSearchRequest):
-    subreddit: str | None = None  # optional subreddit scope
-
-
 class AggregateSearchRequest(BaseModel):
     query: str
     max_results: int = 25
@@ -26,7 +22,7 @@ class UnifiedResult(BaseModel):
     title: str
     url: str
     content_snippet: str
-    source_platform: str  # "reddit"|"hn"|"bluesky"|"gnews"|"google_news_rss"|"rss"
+    source_platform: str  # "hn"|"gnews"|"google_news_rss"|"rss"
     source_domain: str
     author: str | None = None
     timestamp: str  # ISO 8601

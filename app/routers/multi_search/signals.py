@@ -71,7 +71,7 @@ _INDEPENDENT_DOMAIN_PARTS: tuple[str, ...] = (
     "buttondown.email",
 )
 
-_SOCIAL_PLATFORMS: frozenset[str] = frozenset({"reddit", "hn", "bluesky"})
+_SOCIAL_PLATFORMS: frozenset[str] = frozenset({"hn"})
 
 
 def get_credibility_tier(source_domain: str, source_platform: str) -> str | None:

@@ -61,7 +61,7 @@ ENDPOINTS = [
     EndpointInfo(
         path="/multi-search",
         description="News and social search with bias signals",
-        provider="GNews, Reddit, HN, Bluesky, RSS",
+        provider="GNews, Google News RSS, HN, RSS",
     ),
     EndpointInfo(path="/github", description="Repos, issues, PRs, code", provider="GitHub"),
     EndpointInfo(path="/kb", description="Knowledge base search, uploads and sources", provider="KB service"),
