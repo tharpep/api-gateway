@@ -26,6 +26,7 @@ from app.routers import (
     email,
     finance,
     github,
+    github_app,
     health,
     homelab,
     journal,
@@ -138,6 +139,12 @@ app.include_router(
 )
 app.include_router(
     webhooks.router, prefix="/webhooks", tags=["webhooks"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    github_app.router,
+    prefix="/github/app",
+    tags=["github-app"],
+    dependencies=[Depends(verify_api_key)],
 )
 app.include_router(
     github.router, prefix="/github", tags=["github"], dependencies=[Depends(verify_api_key)]
