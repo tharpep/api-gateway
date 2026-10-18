@@ -3,6 +3,7 @@ from enum import IntEnum
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app import activity
 from app.config import settings
 from app.http_client import get_client
 
@@ -83,8 +84,10 @@ async def send_pushover(
         payload["expire"] = 3600
 
     response = await get_client().post(PUSHOVER_API_URL, data=payload)
+    detail = {"message": payload["message"], "priority": int(priority), "url": url}
 
     if response.status_code != 200:
+        activity.record("notify", payload["title"], "error", detail | {"error": response.text})
         raise HTTPException(
             status_code=response.status_code,
             detail=f"Pushover API error: {response.text}"
@@ -92,10 +95,12 @@ async def send_pushover(
 
     data = response.json()
     if data.get("status") != 1:
+        activity.record("notify", payload["title"], "error", detail | {"error": str(data)})
         raise HTTPException(
             status_code=400,
             detail=f"Pushover rejected: {data.get('errors', 'Unknown error')}"
         )
+    activity.record("notify", payload["title"], "ok", detail)
     return data
 
 

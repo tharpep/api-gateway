@@ -23,6 +23,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app import activity
 from app.config import settings
 from app.http_client import get_client
 from app.registry import ServiceDef, load_registry
@@ -112,6 +113,7 @@ async def disks(containers: list[dict] | None) -> None:
             _disk_firing.discard(key)
     if newly:
         title = f"Disk over {settings.alert_disk_percent}%"
+        activity.record("disk", title, "error", {"lines": newly})
         await _push(title, "\n".join(newly), Priority.NORMAL)
 
 
@@ -155,4 +157,7 @@ async def deploys() -> None:
 
     for name, sha, commit, url in failed:
         message = f"{name} {sha}: {commit[0] if commit else ''}".strip()
+        activity.record(
+            "deploy", f"Deploy failed: {name}", "error", {"commit": message, "url": url}
+        )
         await _push(f"Deploy failed: {name}", message, Priority.NORMAL, url)

@@ -20,7 +20,7 @@ import asyncpg
 import httpx
 from fastapi import HTTPException
 
-from app import alerts
+from app import activity, alerts
 from app.config import settings
 from app.http_client import get_client
 from app.registry import ServiceDef, load_registry
@@ -278,6 +278,12 @@ async def poll_once() -> None:
         changes.append((svc, previous, current))
         if previous is not None and current is not None and current != previous:
             transitions.append((svc, current, detail))
+            activity.record(
+                "recovery" if current else "outage",
+                f"{svc.name} {'is back up' if current else 'is down'}",
+                "ok" if current else "error",
+                {"service": svc.id, "detail": detail, "group": svc.group},
+            )
     _last_cycle_at = datetime.now(UTC)
     try:
         await _persist(changes)

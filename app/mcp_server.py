@@ -7,6 +7,8 @@ gateway key; direct LAN callers must send the key themselves.
 """
 
 import asyncio
+import functools
+import time
 from typing import Any, Literal
 
 import httpx
@@ -16,6 +18,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
+from app import activity
 from app.config import settings
 from app.dependencies import verify_api_key
 from app.http_client import get_client
@@ -41,6 +44,40 @@ mcp = FastMCP(
     # cross-site browser requests, so the check adds nothing here.
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
+
+
+_mcp_tool = mcp.tool
+
+
+def _recorded_tool(*dargs, **dkwargs):
+    """mcp.tool(), plus an activity record per call (name, args, outcome, duration)."""
+
+    def decorate(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            t0 = time.perf_counter()
+            status, error = "ok", None
+            try:
+                return await fn(*args, **kwargs)
+            except Exception as e:
+                status, error = "error", str(e)[:500]
+                raise
+            finally:
+                activity.record(
+                    "mcp",
+                    f"MCP {fn.__name__}",
+                    status,
+                    {"tool": fn.__name__, "args": {k: str(v)[:300] for k, v in kwargs.items()},
+                     "error": error},
+                    int((time.perf_counter() - t0) * 1000),
+                )
+
+        return _mcp_tool(*dargs, **dkwargs)(wrapper)
+
+    return decorate
+
+
+mcp.tool = _recorded_tool  # type: ignore[method-assign]
 
 
 async def _call(coro):

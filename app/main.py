@@ -11,7 +11,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app import service_health
+from app import activity, service_health
 from app.config import settings
 from app.dependencies import verify_api_key
 from app.http_client import shutdown as http_client_shutdown
@@ -163,6 +163,10 @@ app.include_router(
 )
 app.include_router(
     services.router, prefix="/homelab", tags=["homelab"], dependencies=[Depends(verify_api_key)]
+)
+
+app.include_router(
+    activity.router, prefix="/activity", tags=["activity"], dependencies=[Depends(verify_api_key)]
 )
 
 # MCP (streamable HTTP) at /mcp/ — API key enforced inside build_mcp_app()
