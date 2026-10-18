@@ -180,9 +180,24 @@ def _check_path(path: str) -> None:
         raise HTTPException(422, f"changes to '{path}' aren't allowed (git internals / workflows)")
 
 
+async def _ref_sha(r: str, branch: str, token: str) -> str | None:
+    try:
+        return (await _call("GET", f"{r}/git/ref/heads/{branch}", token))["object"]["sha"]
+    except HTTPException as e:
+        if e.status_code == 404:
+            return None
+        raise
+
+
 @router.post("/pull-request", status_code=201)
 async def pull_request_from_files(req: PullRequestFromFiles):
-    """Commit the given files on a new sazed/... branch off the base, and open a PR as the bot."""
+    """Commit the given files on a sazed/... branch and open (or update) its PR as the bot.
+
+    `files` is the full set of changes relative to the base: a follow-up sends everything it and
+    its parents changed. A new branch starts from the base. An existing branch gets a new commit
+    whose tree is the merge base plus `files`, so a file a follow-up put back to its original
+    content is reverted on the branch too; the open PR is reused.
+    """
     owner, name = _check_repo(req.repo)
     if not _BRANCH_RE.match(req.branch):
         raise HTTPException(422, "branch must look like sazed/<id>")
@@ -200,10 +215,18 @@ async def pull_request_from_files(req: PullRequestFromFiles):
     token, _ = await installation_token(req.repo, {"contents": "write", "pull_requests": "write"})
     r = f"/repos/{owner}/{name}"
     base = req.base or (await _call("GET", r, token))["default_branch"]
-    base_sha = (await _call("GET", f"{r}/git/ref/heads/{base}", token))["object"]["sha"]
-    base_tree = (await _call("GET", f"{r}/git/commits/{base_sha}", token))["tree"]["sha"]
+    base_sha = await _ref_sha(r, base, token)
+    if base_sha is None:
+        raise HTTPException(422, f"base branch '{base}' not found")
+    head_sha = await _ref_sha(r, req.branch, token)
+    if head_sha is None:
+        start_sha, parent_sha = base_sha, base_sha
+    else:
+        compare = await _call("GET", f"{r}/compare/{base}...{req.branch}", token)
+        start_sha, parent_sha = compare["merge_base_commit"]["sha"], head_sha
+    start_tree = (await _call("GET", f"{r}/git/commits/{start_sha}", token))["tree"]["sha"]
     # Keep existing file modes (e.g. executable scripts); new files are regular files.
-    existing = await _call("GET", f"{r}/git/trees/{base_tree}?recursive=1", token)
+    existing = await _call("GET", f"{r}/git/trees/{start_tree}?recursive=1", token)
     modes = {e["path"]: e["mode"] for e in existing.get("tree", []) if e.get("type") == "blob"}
 
     entries = []
@@ -221,30 +244,54 @@ async def pull_request_from_files(req: PullRequestFromFiles):
         raise HTTPException(422, "nothing to commit")
 
     tree = await _call(
-        "POST", f"{r}/git/trees", token, json={"base_tree": base_tree, "tree": entries}
+        "POST", f"{r}/git/trees", token, json={"base_tree": start_tree, "tree": entries}
     )
     commit = await _call(
         "POST",
         f"{r}/git/commits",
         token,
-        json={"message": req.commit_message, "tree": tree["sha"], "parents": [base_sha]},
+        json={"message": req.commit_message, "tree": tree["sha"], "parents": [parent_sha]},
     )
-    await _call(
-        "POST",
-        f"{r}/git/refs",
-        token,
-        json={"ref": f"refs/heads/{req.branch}", "sha": commit["sha"]},
+    if head_sha is None:
+        await _call(
+            "POST",
+            f"{r}/git/refs",
+            token,
+            json={"ref": f"refs/heads/{req.branch}", "sha": commit["sha"]},
+        )
+    else:  # a fast-forward: the new commit's parent is the branch head
+        await _call(
+            "PATCH",
+            f"{r}/git/refs/heads/{req.branch}",
+            token,
+            json={"sha": commit["sha"], "force": False},
+        )
+
+    open_prs = await _call(
+        "GET", f"{r}/pulls", token, params={"head": f"{owner}:{req.branch}", "state": "open"}
     )
-    pr = await _call(
-        "POST",
-        f"{r}/pulls",
-        token,
-        json={"title": req.title, "head": req.branch, "base": base, "body": req.body},
+    if open_prs:
+        pr, updated = open_prs[0], True
+    else:
+        pr = await _call(
+            "POST",
+            f"{r}/pulls",
+            token,
+            json={"title": req.title, "head": req.branch, "base": base, "body": req.body},
+        )
+        updated = False
+    logger.info(
+        "Bot %s PR %s#%s (%d files)",
+        "updated" if updated else "opened",
+        req.repo,
+        pr["number"],
+        len(entries),
     )
-    logger.info("Bot opened PR %s#%s (%d files)", req.repo, pr["number"], len(entries))
     return {
         "number": pr["number"],
         "url": pr["html_url"],
         "branch": req.branch,
         "files": len(entries),
+        "updated": updated,
+        "head_sha": commit["sha"],
     }

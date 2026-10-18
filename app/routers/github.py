@@ -218,6 +218,51 @@ async def add_issue_comment(owner: str, repo: str, number: int, req: CommentRequ
     return {"id": c["id"], "url": c["html_url"]}
 
 
+@router.get("/repos/{owner}/{repo}/ci")
+async def ci_status(owner: str, repo: str, sha: str):
+    """Workflow runs for a commit: overall state, and log tails of failed jobs (for fix-ups).
+
+    state is "none" (no runs yet), "pending", "success" or "failure".
+    """
+    resp = await _gh("GET", f"/repos/{owner}/{repo}/actions/runs", params={"head_sha": sha})
+    runs = resp.json().get("workflow_runs", [])
+    if not runs:
+        return {"state": "none", "runs": []}
+    summary = [
+        {"name": r["name"], "status": r["status"], "conclusion": r["conclusion"],
+         "url": r["html_url"], "id": r["id"]}
+        for r in runs
+    ]
+    if any(r["status"] != "completed" for r in runs):
+        return {"state": "pending", "runs": summary}
+    failed = [r for r in runs if r["conclusion"] not in ("success", "skipped", "neutral")]
+    if not failed:
+        return {"state": "success", "runs": summary}
+    logs = []
+    for run in failed[:2]:
+        jobs = (await _gh("GET", f"/repos/{owner}/{repo}/actions/runs/{run['id']}/jobs")).json()
+        for job in jobs.get("jobs", []):
+            if job.get("conclusion") != "failure":
+                continue
+            steps = job.get("steps", [])
+            failed_steps = [s["name"] for s in steps if s.get("conclusion") == "failure"]
+            log = await get_client().get(
+                f"{GITHUB_API}/repos/{owner}/{repo}/actions/jobs/{job['id']}/logs",
+                headers=_headers(),
+                timeout=30.0,
+                follow_redirects=True,
+            )
+            logs.append({
+                "workflow": run["name"],
+                "job": job["name"],
+                "failed_steps": failed_steps,
+                "log_tail": (
+                    log.text[-6000:] if log.is_success else f"(log unavailable: {log.status_code})"
+                ),
+            })
+    return {"state": "failure", "runs": summary, "failures": logs}
+
+
 # ---------------------------------------------------------------------------
 # Pull Requests
 # ---------------------------------------------------------------------------
