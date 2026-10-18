@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # worker's PRs. The private key is the .pem, base64-encoded onto one line.
     github_app_id: str = ""
     github_app_key_b64: str = ""
+    # Repos the bot never touches (Pryce's dormant repos with permissive workflow tokens).
+    github_app_excluded_repos: list[str] = [
+        "tharpep/Trusted-Model-Registry",
+        "tharpep/gotenberg-fork",
+    ]
 
     # Google Maps Platform (Places API)
     google_maps_api_key: str = ""

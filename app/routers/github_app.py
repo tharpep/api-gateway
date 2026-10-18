@@ -89,6 +89,8 @@ def _check_repo(repo: str) -> tuple[str, str]:
 async def installation_token(repo: str, permissions: dict[str, str]) -> tuple[str, str]:
     """(token, expires_at) for one repo with exactly these permissions."""
     owner, name = _check_repo(repo)
+    if repo.lower() in {r.lower() for r in settings.github_app_excluded_repos}:
+        raise HTTPException(403, f"{repo} is excluded from the bot (GITHUB_APP_EXCLUDED_REPOS)")
     key = (repo.lower(), tuple(sorted(permissions.items())))
     cached = _tokens.get(key)
     if cached and cached[1] - time.time() > 300:
@@ -135,8 +137,10 @@ async def create_issue(owner: str, repo: str, req: IssueRequest):
 
 @router.post("/repos/{owner}/{repo}/issues/{number}/comments", status_code=201)
 async def add_issue_comment(owner: str, repo: str, number: int, req: CommentRequest):
-    """Comment on an issue or PR as the bot."""
-    token, _ = await installation_token(f"{owner}/{repo}", {"issues": "write"})
+    """Comment on an issue or PR as the bot (PR conversation comments use the same endpoint)."""
+    token, _ = await installation_token(
+        f"{owner}/{repo}", {"issues": "write", "pull_requests": "write"}
+    )
     c = await _call(
         "POST", f"/repos/{owner}/{repo}/issues/{number}/comments", token, json={"body": req.body}
     )
