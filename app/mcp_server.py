@@ -6,13 +6,19 @@ Reached over the tailnet at https://sazed.tail77c590.ts.net/gw/mcp/, where Caddy
 gateway key; direct LAN callers must send the key themselves.
 """
 
+import asyncio
+from typing import Any, Literal
+
+import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
+from app.config import settings
 from app.dependencies import verify_api_key
+from app.http_client import get_client
 from app.routers import homelab, services
 
 mcp = FastMCP(
@@ -21,7 +27,11 @@ mcp = FastMCP(
         "Tools for Pryce's homelab and personal services, served by his api-gateway. "
         "Homelab tools read Proxmox status and can start or restart containers; Proxmox "
         "itself decides which containers are allowed (CT 108 never is). Restarting briefly "
-        "takes that service down, so confirm with the user before restarting."
+        "takes that service down, so confirm with the user before restarting. "
+        "Job tools hand work to Sazed's worker on the homelab: research and second opinions run "
+        "on Gemini (Antigravity) with Google search; code tasks run on Claude Code and wait for "
+        "Pryce's approval in the Sazed console before they start. Long jobs return a job_id; "
+        "check it with job_status."
     ),
     stateless_http=True,
     json_response=True,
@@ -78,6 +88,150 @@ async def homelab_restart_container(vmid: int) -> dict:
 async def homelab_start_container(vmid: int) -> dict:
     """Start a stopped container. Only containers the gateway's power token may manage."""
     return await _call(homelab.start_container(vmid))
+
+
+# ---------------------------------------------------------------- Sazed worker jobs
+
+_WAIT_SECONDS = 50
+_FINAL = {"succeeded", "failed", "cancelled", "timed_out"}
+
+
+async def _sazed(method: str, path: str, body: dict | None = None) -> Any:
+    if not settings.sazed_url:
+        raise ToolError("Sazed isn't configured on the gateway (SAZED_URL)")
+    try:
+        resp = await get_client().request(
+            method,
+            f"{settings.sazed_url.rstrip('/')}{path}",
+            json=body,
+            headers={"X-API-Key": settings.sazed_api_key},
+            timeout=40.0,
+        )
+    except httpx.HTTPError as e:
+        raise ToolError(f"Sazed unreachable: {e}") from e
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except ValueError:
+            detail = resp.text
+        raise ToolError(str(detail))
+    return resp.json()
+
+
+def _job_view(job: dict) -> dict:
+    out = {
+        "job_id": job["id"],
+        "status": job["status"],
+        "kind": job["kind"],
+        "model": job.get("model"),
+        "title": job.get("title"),
+    }
+    if job.get("result"):
+        out["result"] = job["result"][:12000]
+    if job.get("error"):
+        out["error"] = job["error"]
+    meta = job.get("meta") or {}
+    for key in ("pr_url", "ci_state"):
+        if meta.get(key):
+            out[key] = meta[key]
+    if job["status"] == "needs_approval":
+        out["note"] = "Waiting for Pryce to approve it in the Sazed console (Automations, Jobs)."
+    elif job["status"] not in _FINAL:
+        out["note"] = "Still running. Call job_status with this job_id later."
+    return out
+
+
+async def _wait(job: dict) -> dict:
+    if job["status"] in _FINAL or job["status"] == "needs_approval":
+        return _job_view(job)
+    for _ in range(_WAIT_SECONDS // 3):
+        await asyncio.sleep(3)
+        job = await _sazed("GET", f"/jobs/{job['id']}?events=false")
+        if job["status"] in _FINAL:
+            break
+    return _job_view(job)
+
+
+@mcp.tool()
+async def research(
+    question: str,
+    depth: Literal["quick", "deep"] = "quick",
+    save_to_kb: bool = False,
+) -> dict:
+    """Research a question on the web with Sazed's worker (Gemini 3.8 Flash via Antigravity,
+    live Google Search, reads pages, cites sources). quick is about a minute, deep several
+    minutes. Returns the answer, or a job_id if it's still running. save_to_kb keeps the result
+    in Pryce's knowledge base (only when asked)."""
+    job = await _sazed(
+        "POST",
+        "/jobs/research",
+        {"question": question, "depth": depth, "save_to_kb": save_to_kb, "requested_by": "mcp"},
+    )
+    return await _wait(job)
+
+
+@mcp.tool()
+async def second_opinion(subject: str, context: str = "") -> dict:
+    """An independent second opinion from a different model family (Gemini) on a plan,
+    decision, design or answer. Put the full thing to judge in `subject`. Returns a verdict,
+    concerns and alternatives, or a job_id if it's still running."""
+    job = await _sazed(
+        "POST",
+        "/jobs/second-opinion",
+        {"subject": subject, "context": context, "requested_by": "mcp"},
+    )
+    return await _wait(job)
+
+
+@mcp.tool()
+async def delegate_code_task(
+    repo: str, instruction: str, mode: Literal["review", "change"] = "review"
+) -> dict:
+    """Queue a code task on one of Pryce's repos for Claude Code on the homelab worker.
+    review: read-only analysis. change: edits become a pull request from the sazed-worker bot
+    that Pryce merges himself. Either way it waits for Pryce's approval in the Sazed console
+    before it starts; returns the job_id to check later."""
+    job = await _sazed(
+        "POST",
+        "/jobs/code-task",
+        {"repo": repo, "instruction": instruction, "mode": mode, "requested_by": "mcp"},
+    )
+    return _job_view(job)
+
+
+@mcp.tool()
+async def continue_job(job_id: str, instruction: str) -> dict:
+    """Follow up on a finished worker job: the same agent resumes with its context. On a change
+    job, the follow-up updates the same pull request (and waits for approval again)."""
+    job = await _sazed(
+        "POST", f"/jobs/{job_id}/continue", {"instruction": instruction, "requested_by": "mcp"}
+    )
+    return await _wait(job)
+
+
+@mcp.tool()
+async def job_status(job_id: str) -> dict:
+    """A worker job's status, and its result, PR link and CI state once available."""
+    return _job_view(await _sazed("GET", f"/jobs/{job_id}?events=false"))
+
+
+@mcp.tool()
+async def list_jobs(limit: int = 10) -> dict:
+    """Recent worker jobs (research, second opinions, code tasks) with status and a preview."""
+    data = await _sazed("GET", f"/jobs?limit={max(1, min(limit, 50))}")
+    return {
+        "jobs": [
+            {
+                "job_id": j["id"],
+                "kind": j["kind"],
+                "status": j["status"],
+                "title": j["title"],
+                "created_at": j["created_at"],
+                "preview": (j.get("result_preview") or j.get("error") or "")[:200],
+            }
+            for j in data.get("jobs", [])
+        ]
+    }
 
 
 class _RequireApiKey:
