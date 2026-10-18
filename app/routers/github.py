@@ -310,6 +310,8 @@ async def get_pr(owner: str, repo: str, number: int):
         "base": p["base"]["ref"],
         "draft": p["draft"],
         "mergeable": p.get("mergeable"),
+        "merged": bool(p.get("merged")),
+        "merged_at": p.get("merged_at"),
         "created_at": p["created_at"],
         "url": p["html_url"],
     }
