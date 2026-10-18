@@ -69,7 +69,7 @@ services:
     group: sazed
     container: 106
     lifecycle: active
-    description: Agent loop, memory, tools (Haiku 5.5 / Sonnet 5.5)
+    description: Agent loop, memory, tools, automations scheduler (Haiku 5.5 / Sonnet 5.5)
     health: {type: http, url: http://192.168.50.155:8000/health}
     depends_on: [api-gateway, postgres]
     repo: tharpep/sazed
@@ -116,16 +116,8 @@ services:
     repo: tharpep/knowledge-base
     env_keys: [API_KEY, API_GATEWAY_URL, API_GATEWAY_KEY, DATABASE_URL, VOYAGE_API_KEY]
 
-  - id: automations
-    name: Automations
-    group: sazed
-    container: 107
-    lifecycle: active
-    description: Scheduler (no listening port yet; v2 will run rows from Postgres)
-    health: {type: container}
-    depends_on: [api-gateway, sazed]
-    repo: tharpep/automations
-    env_keys: [API_GATEWAY_URL, API_GATEWAY_KEY, SAZED_URL, SAZED_API_KEY]
+  # Automations run inside Sazed since 2026-10-18 (automations v2). CT 107, the old script runner,
+  # is stopped with onboot 0 and kept only for rollback; it has no registry entry.
 
   - id: vault
     name: Obsidian vault
