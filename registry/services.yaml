@@ -19,7 +19,7 @@
 #                 {type: container}      Proxmox reports the container running
 #                 {type: proxmox_host}
 #               Every check also requires its container to be running.
-#   depends_on  ids this needs (drives the generated architecture diagram)
+#   depends_on  ids this needs (documentation; the console's map is drawn from map.yaml)
 #   repo        GitHub repo, if it's ours
 #   env_keys    config keys it needs (names only; documents secrets, never values)
 #

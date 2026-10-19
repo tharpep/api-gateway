@@ -106,6 +106,12 @@ Hybrid by design: service **definitions** live in `registry/services.yaml` (git;
 
 To add a service: add an entry to `registry/services.yaml` and deploy. Never rename an `id`, because state rows hang off it.
 
+### Architecture map (`registry/map.yaml`, `app/arch_map.py`)
+
+The console's Homelab Map view is drawn from `registry/map.yaml`. It's pure data: grid layout (columns, rows), nodes (which registry services and integrations roll up into each dot), and edges with Activity `signals` that light them up. Change the map by editing the file; it's re-read on change, and a bad edit keeps the last good version.
+
+`GET /homelab/map` returns it with live health per node (the poller's results plus console state: down beats maintenance beats up), container stats, and integration status for external nodes. Integration status only means "configured", not "reachable". Any active registry service no node covers is added as a dashed "not on the map yet" box in `unplaced_col`, so the map can't silently miss a service.
+
 ### Alerts (`app/alerts.py`)
 
 Deterministic Pushover alerts run at the end of each poll cycle (so homelab only), through `notify.send_pushover`. Outages: confirmed down/up transitions, one message per cycle; muted or in-maintenance services are skipped; down is HIGH priority unless every affected service is in the `apps` group; recovery is LOW. Disk: Proxmox storage pools and running containers' root disks at `ALERT_DISK_PERCENT` (85), re-armed 5 points below. Deploys: failed "Deploy to Homelab" runs for active registry repos, checked every `ALERT_DEPLOY_POLL_SECONDS` (300) with the gateway's GitHub token. The poller seeds last-known status from `service_state` at startup, so restarts don't alert. Disk and deploy dedupe are in memory (deliberately no migration: on GCP the gateway and Sazed share one `schema_migrations` version counter). `ALERTS_ENABLED=false` silences all of it. Whole-homelab-down needs an outside dead-man's switch; not set up.
