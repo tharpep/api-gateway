@@ -112,6 +112,11 @@ The console's Homelab Map view is drawn from `registry/map.yaml`. It's pure data
 
 `GET /homelab/map` returns it with live health per node (the poller's results plus console state: down beats maintenance beats up), container stats, and integration status for external nodes. Integration status only means "configured", not "reachable". Any active registry service no node covers is added as a dashed "not on the map yet" box in `unplaced_col`, so the map can't silently miss a service.
 
+`GET /homelab/map/public` is the public-safe version Sazed publishes to the portfolio.
+- It keeps only placed nodes with `public` true (default) and lines between them.
+- Per node: label, subtitle (`public_sub`, or the subtitle minus `CT nnn`), `about`, kind, position, status, and service counts. Also overall 7-day uptime from `service_events` (`service_health.uptime_percent`).
+- Never included: service ids, containers, hosts, IPs or URLs. The media apps node is `public: false`.
+
 ### Alerts (`app/alerts.py`)
 
 Deterministic Pushover alerts run at the end of each poll cycle (so homelab only), through `notify.send_pushover`. Outages: confirmed down/up transitions, one message per cycle; muted or in-maintenance services are skipped; down is HIGH priority unless every affected service is in the `apps` group; recovery is LOW. Disk: Proxmox storage pools and running containers' root disks at `ALERT_DISK_PERCENT` (85), re-armed 5 points below. Deploys: failed "Deploy to Homelab" runs for active registry repos, checked every `ALERT_DEPLOY_POLL_SECONDS` (300) with the gateway's GitHub token. The poller seeds last-known status from `service_state` at startup, so restarts don't alert. Disk and deploy dedupe are in memory (deliberately no migration: on GCP the gateway and Sazed share one `schema_migrations` version counter). `ALERTS_ENABLED=false` silences all of it. Whole-homelab-down needs an outside dead-man's switch; not set up.
