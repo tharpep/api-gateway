@@ -45,53 +45,53 @@ layout:
 nodes:
   # Clients
   - {id: phone, label: iPhone, sub: Console app, kind: client, col: 0, row: 1,
-     about: "The console as a home-screen app, over Tailscale"}
+     about: "The dashboard on my phone, over Tailscale"}
   - {id: desktop, label: Desktop, sub: Browser, kind: client, col: 0, row: 2,
-     about: "The same console in a desktop browser"}
+     about: "The dashboard in a desktop browser"}
   - {id: claude-code, label: Claude Code, sub: MCP client, kind: client, col: 0, row: 4,
      services: [claude-code],
-     about: "Claude Code and Claude Desktop use the gateway's MCP tools"}
+     about: "Claude Code and Claude Desktop connect through the gateway's MCP server"}
 
   # Homelab
   - {id: console, label: Console, sub: "Caddy, CT 106", kind: homelab, col: 1, row: 2,
      services: [sazed-console],
-     about: "React console behind Caddy; tailnet-only, injects API keys at the edge"}
+     about: "Web dashboard served by Caddy, which adds the API keys"}
   - {id: proxmox, label: Proxmox, sub: Host, kind: homelab, col: 1, row: 6,
      services: [proxmox],
-     about: "One Proxmox host running every service as an LXC container"}
+     about: "The Proxmox host the containers run on"}
   - {id: sazed, label: Sazed, sub: "Agent, CT 106", kind: homelab, col: 2, row: 0.5,
      services: [sazed],
-     about: "The agent: tool loop, memory, automations, jobs, backlog, activity timeline"}
+     about: "The agent: tools, memory, automations and background jobs"}
   - {id: gateway, label: Gateway, sub: "APIs, MCP, CT 104", kind: homelab, col: 2, row: 2.5,
      services: [api-gateway],
-     about: "One door to every outside API, plus health checks, alerts and the MCP server"}
+     about: "Handles outside API calls, health checks, alerts and the MCP server"}
   - {id: knowledge, label: Knowledge, sub: "RAG, CT 105", kind: homelab, col: 2, row: 4.5,
      services: [knowledge-base],
-     about: "Hybrid search (pgvector plus full text) over uploaded documents"}
+     about: "Document search with pgvector and full-text search"}
   - {id: worker, label: Worker, sub: "Agents, CT 110", kind: homelab, col: 3, row: 0.5,
      services: [sazed-worker],
-     about: "Sandboxed Claude Code and Gemini jobs: research, reviews, and PRs from a bot"}
+     about: "Runs Claude Code and Gemini jobs in a sandboxed container"}
   - {id: postgres, label: Postgres, sub: CT 103, kind: homelab, col: 3, row: 4.5,
      services: [postgres], public_sub: "pgvector",
-     about: "One database per service"}
+     about: "Databases for the services, with pgvector"}
   - {id: media, label: Media apps, kind: homelab, col: 3, row: 6, services_group: apps,
      public: false}
 
   # Outside services
   - {id: anthropic, label: Anthropic, sub: Claude models, kind: external, col: 4, row: 0,
      integrations: [anthropic],
-     about: "Claude for the agent (API) and for Claude Code jobs (subscription)"}
+     about: "Claude models for Sazed and for Claude Code jobs"}
   - {id: gemini, label: Gemini, sub: via Antigravity, kind: external, col: 4, row: 1,
-     about: "Research and second opinions with live Google Search"}
+     about: "Research and second opinions, using Google Search"}
   - {id: github, label: GitHub, sub: "Repos, PRs, CI", kind: external, col: 4, row: 2,
      integrations: [github],
-     about: "Repos, CI, deploys through self-hosted runners, and the bot's PRs"}
+     about: "Repos, CI, deploys and the worker's pull requests"}
   - {id: google, label: Google, sub: "Calendar, Gmail", kind: external, col: 4, row: 3,
      integrations: [google_calendar, google_email, google_tasks, google_storage],
      about: "Calendar, Tasks, Gmail and Drive"}
   - {id: pushover, label: Pushover, sub: Phone alerts, kind: external, col: 4, row: 4,
      integrations: [pushover],
-     about: "Outage, deploy and job notifications"}
+     about: "Notifications to my phone"}
 
 edges:
   - {from: phone, to: console, quiet: true}
