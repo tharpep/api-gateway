@@ -118,6 +118,16 @@ services:
     repo: tharpep/knowledge-base
     env_keys: [API_KEY, API_GATEWAY_URL, API_GATEWAY_KEY, DATABASE_URL, VOYAGE_API_KEY]
 
+  - id: sazed-worker
+    name: Sazed worker
+    group: sazed
+    container: 110
+    lifecycle: active
+    description: Runs Claude Code and Antigravity jobs (research, reviews, PRs); polls Sazed
+    health: {type: container}  # no listening port: it only makes outbound calls
+    depends_on: [sazed]
+    repo: tharpep/sazed-worker
+
   # Automations run inside Sazed since 2026-10-18 (automations v2). CT 107, the old script runner,
   # is stopped with onboot 0 and kept only for rollback; it has no registry entry.
 

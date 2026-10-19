@@ -126,3 +126,23 @@ async def update_service_state(service_id: str, body: ServiceStateUpdate):
         service_id, body.maintenance_minutes, body.muted, body.notes
     )
     return {"id": service_id, "state": _state(row)}
+
+
+@router.get("/map")
+async def architecture_map():
+    """The console's architecture map (registry/map.yaml) with live health per node, container
+    stats, and outside-service status folded in."""
+    from app import arch_map  # lazy: keeps router import light
+    from app.routers import health, homelab
+
+    latest, _, _ = service_health.snapshot()
+    states = await service_health.get_states()
+    try:
+        containers = await homelab.list_containers()
+    except Exception:  # Proxmox down or not configured: the map still renders, without stats
+        containers = None
+    integrations = (await health.get_integrations()).model_dump()
+    try:
+        return arch_map.build(latest, states, containers, integrations)
+    except Exception as e:
+        raise HTTPException(500, f"Map couldn't be built: {e}") from e

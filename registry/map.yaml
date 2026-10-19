@@ -1,0 +1,103 @@
+# Architecture map: the console's Map view (Homelab page, default). Pure data: edit this file
+# to move, add or rewire anything; the gateway re-reads it when it changes and serves it at
+# GET /homelab/map with live health folded in.
+#
+# layout
+#   columns     one {x, w} per grid column, in SVG units (the map is 680 wide)
+#   row_height  vertical step per row; top = y of row 0. Rows may be fractions (0.5).
+#   unplaced_col  where registry services that no node covers appear (flagged "not on the
+#               map yet"), so a new service shows up even before anyone edits this file
+#
+# nodes
+#   id, label, sub   sub is optional (a services_group node shows its service count)
+#   kind        client | homelab | external   (homelab nodes sit inside the homelab frame)
+#   col, row    grid position
+#   services    registry ids whose health rolls up into this node's dot
+#   services_group  every registry service in that group not covered by another node
+#   integrations    /health/integrations keys for external nodes' dots
+#
+# edges
+#   from, to    node ids (the arrow points at `to`)
+#   signals     Activity events that light this line up live (and count as its traffic):
+#                 kind  regex on the event kind (full match), e.g. llm, tool, job\.pr, gw\.notify
+#                 title regex searched in the event title, case-insensitive (optional)
+#                 agent the job's agent, agy | claude (optional)
+#               Job steps arrive as kind job.step with the job's agent.
+#   quiet       true for lines with no Activity signal (polling, browsing): they animate slowly
+#               and the weekly drift check doesn't report them as unused
+#   route       over: drawn above the map (for lines that would cross other nodes)
+
+layout:
+  columns:
+    - {x: 16, w: 96}
+    - {x: 136, w: 104}
+    - {x: 266, w: 116}
+    - {x: 408, w: 112}
+    - {x: 552, w: 116}
+  row_height: 65
+  top: 40
+  unplaced_col: 3
+
+nodes:
+  # Clients
+  - {id: phone, label: iPhone, sub: Console app, kind: client, col: 0, row: 1}
+  - {id: desktop, label: Desktop, sub: Browser, kind: client, col: 0, row: 2}
+  - {id: claude-code, label: Claude Code, sub: MCP client, kind: client, col: 0, row: 4,
+     services: [claude-code]}
+
+  # Homelab
+  - {id: console, label: Console, sub: "Caddy, CT 106", kind: homelab, col: 1, row: 2,
+     services: [sazed-console]}
+  - {id: proxmox, label: Proxmox, sub: Host, kind: homelab, col: 1, row: 6,
+     services: [proxmox]}
+  - {id: sazed, label: Sazed, sub: "Agent, CT 106", kind: homelab, col: 2, row: 0.5,
+     services: [sazed]}
+  - {id: gateway, label: Gateway, sub: "APIs, MCP, CT 104", kind: homelab, col: 2, row: 2.5,
+     services: [api-gateway]}
+  - {id: knowledge, label: Knowledge, sub: "RAG, CT 105", kind: homelab, col: 2, row: 4.5,
+     services: [knowledge-base]}
+  - {id: worker, label: Worker, sub: "Agents, CT 110", kind: homelab, col: 3, row: 0.5,
+     services: [sazed-worker]}
+  - {id: postgres, label: Postgres, sub: CT 103, kind: homelab, col: 3, row: 4.5,
+     services: [postgres]}
+  - {id: media, label: Media apps, kind: homelab, col: 3, row: 6, services_group: apps}
+
+  # Outside services
+  - {id: anthropic, label: Anthropic, sub: Claude models, kind: external, col: 4, row: 0,
+     integrations: [anthropic]}
+  - {id: gemini, label: Gemini, sub: via Antigravity, kind: external, col: 4, row: 1}
+  - {id: github, label: GitHub, sub: "Repos, PRs, CI", kind: external, col: 4, row: 2,
+     integrations: [github]}
+  - {id: google, label: Google, sub: "Calendar, Gmail", kind: external, col: 4, row: 3,
+     integrations: [google_calendar, google_email, google_tasks, google_storage]}
+  - {id: pushover, label: Pushover, sub: Phone alerts, kind: external, col: 4, row: 4,
+     integrations: [pushover]}
+
+edges:
+  - {from: phone, to: console, quiet: true}
+  - {from: desktop, to: console, quiet: true}
+  - {from: claude-code, to: gateway, signals: [{kind: gw\.mcp}]}
+  - {from: console, to: sazed, signals: [{kind: chat\.user}, {kind: approval}]}
+  - {from: console, to: gateway, quiet: true}
+  - {from: sazed, to: worker, signals: [{kind: job}]}
+  - {from: sazed, to: gateway, signals: [{kind: tool}]}
+  - {from: sazed, to: anthropic, route: over, signals: [{kind: llm}]}
+  - {from: sazed, to: postgres,
+     signals: [{kind: "chat\\..*|llm|tool|approval|automation|backlog|job(\\..*)?"}]}
+  - {from: gateway, to: knowledge, signals: [{kind: tool, title: "knowledge|kb|ingest"}]}
+  - {from: knowledge, to: postgres, signals: [{kind: tool, title: "knowledge|kb|ingest"}]}
+  - {from: gateway, to: postgres,
+     signals: [{kind: "gw\\.(outage|recovery)"}, {kind: tool, title: journal}]}
+  - {from: gateway, to: media, quiet: true, signals: [{kind: "gw\\.(outage|recovery)"}]}
+  - {from: gateway, to: proxmox, quiet: true,
+     signals: [{kind: tool, title: container}, {kind: gw\.disk}]}
+  - {from: gateway, to: github,
+     signals: [{kind: job\.ci}, {kind: gw\.deploy},
+               {kind: tool, title: "repo|issue|pr|commit|branch|release|github"}]}
+  - {from: gateway, to: google,
+     signals: [{kind: tool,
+                title: "event|availability|task|email|file|folder|sheet|spreadsheet"}]}
+  - {from: gateway, to: pushover, signals: [{kind: gw\.notify}]}
+  - {from: worker, to: anthropic, signals: [{kind: "job(\\.step)?", agent: claude}]}
+  - {from: worker, to: gemini, signals: [{kind: "job(\\.step)?", agent: agy}]}
+  - {from: worker, to: github, signals: [{kind: job\.pr}]}
