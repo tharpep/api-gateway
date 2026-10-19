@@ -57,6 +57,9 @@ class MapNode(BaseModel):
     services: list[str] = []
     services_group: str | None = None
     integrations: list[str] = []
+    about: str | None = None  # one line on what it does (console panel, public map)
+    public: bool = True  # false keeps it (and every line touching it) off the public map
+    public_sub: str | None = None  # public subtitle; default strips container numbers
 
 
 class MapEdge(BaseModel):
@@ -177,7 +180,9 @@ def build(
         vmids = sorted({s.container for s in members if s.container is not None})
         nodes.append(
             {
-                **n.model_dump(exclude={"services", "services_group", "integrations"}),
+                **n.model_dump(
+                    exclude={"services", "services_group", "integrations", "public", "public_sub"}
+                ),
                 "sub": n.sub or (f"{len(views)} services" if n.services_group else None),
                 "status": status,
                 "services": views,
@@ -217,3 +222,65 @@ def build(
         ],
         "generated_at": datetime.now(UTC).isoformat(),
     }
+
+
+_CONTAINER_REF = re.compile(r",?\s*CT \d+,?\s*")
+
+
+def _public_sub(n: MapNode, built: dict[str, Any]) -> str | None:
+    if n.public_sub is not None:
+        return n.public_sub or None
+    sub = built.get("sub")
+    if not sub:
+        return None
+    cleaned = _CONTAINER_REF.sub(", ", sub).strip(" ,")
+    return cleaned or None
+
+
+def build_public(full: dict[str, Any], uptime_7d: float | None) -> dict[str, Any]:
+    """The public-safe map: only placed nodes marked public, their lines, statuses and counts.
+    No service ids, containers, hosts, IPs or URLs; subtitles lose container numbers."""
+    defs = {n.id: n for n in load_map().nodes}
+    nodes = []
+    for b in full["nodes"]:
+        d = defs.get(b["id"])
+        if d is None or not d.public or not b["placed"]:
+            continue
+        services = b["services"]
+        nodes.append(
+            {
+                "id": b["id"],
+                "label": b["label"],
+                "sub": _public_sub(d, b),
+                "about": d.about,
+                "kind": b["kind"],
+                "col": b["col"],
+                "row": b["row"],
+                "status": b["status"],
+                "services_up": sum(1 for s in services if s["up"]),
+                "services_total": len(services),
+            }
+        )
+    shown = {n["id"] for n in nodes}
+    edges = [
+        {"from": e["from"], "to": e["to"], "quiet": e["quiet"], "route": e["route"]}
+        for e in full["edges"]
+        if e["from"] in shown and e["to"] in shown
+    ]
+    return {
+        "layout": full["layout"],
+        "nodes": nodes,
+        "edges": edges,
+        "uptime_7d": uptime_7d,
+        "generated_at": full["generated_at"],
+    }
+
+
+def public_service_ids(full: dict[str, Any]) -> list[str]:
+    defs = {n.id: n for n in load_map().nodes}
+    return [
+        s["id"]
+        for b in full["nodes"]
+        if b["placed"] and (d := defs.get(b["id"])) and d.public
+        for s in b["services"]
+    ]

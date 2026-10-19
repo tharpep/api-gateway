@@ -346,3 +346,48 @@ async def stop() -> None:
 def snapshot() -> tuple[dict[str, dict[str, Any]], datetime | None, bool]:
     """(latest results by id, last cycle time, poller running)."""
     return _latest, _last_cycle_at, _task is not None and not _task.done()
+
+
+async def uptime_percent(service_ids: list[str], days: int = 7) -> float | None:
+    """Share of the last `days` the given services were up, maintenance windows excluded.
+    State at the window start comes from each service's last transition before it (up if none).
+    None when Postgres is unreachable."""
+    if not service_ids:
+        return None
+    since = datetime.now(UTC) - timedelta(days=days)
+    try:
+        pool = await _get_pool()
+        if pool is None:
+            return None
+        rows = await pool.fetch(
+            """
+            (SELECT DISTINCT ON (service_id) service_id, $2::timestamptz AS at, up, in_maintenance
+             FROM service_events WHERE service_id = ANY($1::text[]) AND at < $2
+             ORDER BY service_id, at DESC)
+            UNION ALL
+            (SELECT service_id, at, up, in_maintenance FROM service_events
+             WHERE service_id = ANY($1::text[]) AND at >= $2)
+            ORDER BY service_id, at
+            """,
+            service_ids,
+            since,
+        )
+    except Exception:
+        logger.warning("uptime query failed", exc_info=True)
+        return None
+    now = datetime.now(UTC)
+    by_service: dict[str, list] = {}
+    for r in rows:
+        by_service.setdefault(r["service_id"], []).append(r)
+    down = 0.0
+    for sid in service_ids:
+        events = by_service.get(sid, [])
+        state_up, maint, t = True, False, since
+        for e in events:
+            if not state_up and not maint:
+                down += (e["at"] - t).total_seconds()
+            state_up, maint, t = e["up"], e["in_maintenance"], max(e["at"], since)
+        if not state_up and not maint:
+            down += (now - t).total_seconds()
+    total = days * 86400 * len(service_ids)
+    return round(100 * (1 - down / total), 2)

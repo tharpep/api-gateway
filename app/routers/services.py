@@ -146,3 +146,14 @@ async def architecture_map():
         return arch_map.build(latest, states, containers, integrations)
     except Exception as e:
         raise HTTPException(500, f"Map couldn't be built: {e}") from e
+
+
+@router.get("/map/public")
+async def public_architecture_map():
+    """The public-safe map for the portfolio (via Sazed's publisher): public nodes and lines,
+    statuses, service counts and 7-day uptime. Nothing that identifies hosts or containers."""
+    from app import arch_map
+
+    full = await architecture_map()
+    uptime = await service_health.uptime_percent(arch_map.public_service_ids(full))
+    return arch_map.build_public(full, uptime)

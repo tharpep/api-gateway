@@ -15,6 +15,10 @@
 #   services    registry ids whose health rolls up into this node's dot
 #   services_group  every registry service in that group not covered by another node
 #   integrations    /health/integrations keys for external nodes' dots
+#   about       one line on what it does (console panel and the public portfolio map)
+#   public      false keeps it, and every line touching it, off the public map
+#               (GET /homelab/map/public, published to the portfolio by Sazed)
+#   public_sub  public subtitle; by default the subtitle minus container numbers
 #
 # edges
 #   from, to    node ids (the arrow points at `to`)
@@ -40,38 +44,54 @@ layout:
 
 nodes:
   # Clients
-  - {id: phone, label: iPhone, sub: Console app, kind: client, col: 0, row: 1}
-  - {id: desktop, label: Desktop, sub: Browser, kind: client, col: 0, row: 2}
+  - {id: phone, label: iPhone, sub: Console app, kind: client, col: 0, row: 1,
+     about: "The console as a home-screen app, over Tailscale"}
+  - {id: desktop, label: Desktop, sub: Browser, kind: client, col: 0, row: 2,
+     about: "The same console in a desktop browser"}
   - {id: claude-code, label: Claude Code, sub: MCP client, kind: client, col: 0, row: 4,
-     services: [claude-code]}
+     services: [claude-code],
+     about: "Claude Code and Claude Desktop use the gateway's MCP tools"}
 
   # Homelab
   - {id: console, label: Console, sub: "Caddy, CT 106", kind: homelab, col: 1, row: 2,
-     services: [sazed-console]}
+     services: [sazed-console],
+     about: "React console behind Caddy; tailnet-only, injects API keys at the edge"}
   - {id: proxmox, label: Proxmox, sub: Host, kind: homelab, col: 1, row: 6,
-     services: [proxmox]}
+     services: [proxmox],
+     about: "One Proxmox host running every service as an LXC container"}
   - {id: sazed, label: Sazed, sub: "Agent, CT 106", kind: homelab, col: 2, row: 0.5,
-     services: [sazed]}
+     services: [sazed],
+     about: "The agent: tool loop, memory, automations, jobs, backlog, activity timeline"}
   - {id: gateway, label: Gateway, sub: "APIs, MCP, CT 104", kind: homelab, col: 2, row: 2.5,
-     services: [api-gateway]}
+     services: [api-gateway],
+     about: "One door to every outside API, plus health checks, alerts and the MCP server"}
   - {id: knowledge, label: Knowledge, sub: "RAG, CT 105", kind: homelab, col: 2, row: 4.5,
-     services: [knowledge-base]}
+     services: [knowledge-base],
+     about: "Hybrid search (pgvector plus full text) over uploaded documents"}
   - {id: worker, label: Worker, sub: "Agents, CT 110", kind: homelab, col: 3, row: 0.5,
-     services: [sazed-worker]}
+     services: [sazed-worker],
+     about: "Sandboxed Claude Code and Gemini jobs: research, reviews, and PRs from a bot"}
   - {id: postgres, label: Postgres, sub: CT 103, kind: homelab, col: 3, row: 4.5,
-     services: [postgres]}
-  - {id: media, label: Media apps, kind: homelab, col: 3, row: 6, services_group: apps}
+     services: [postgres], public_sub: "pgvector",
+     about: "One database per service"}
+  - {id: media, label: Media apps, kind: homelab, col: 3, row: 6, services_group: apps,
+     public: false}
 
   # Outside services
   - {id: anthropic, label: Anthropic, sub: Claude models, kind: external, col: 4, row: 0,
-     integrations: [anthropic]}
-  - {id: gemini, label: Gemini, sub: via Antigravity, kind: external, col: 4, row: 1}
+     integrations: [anthropic],
+     about: "Claude for the agent (API) and for Claude Code jobs (subscription)"}
+  - {id: gemini, label: Gemini, sub: via Antigravity, kind: external, col: 4, row: 1,
+     about: "Research and second opinions with live Google Search"}
   - {id: github, label: GitHub, sub: "Repos, PRs, CI", kind: external, col: 4, row: 2,
-     integrations: [github]}
+     integrations: [github],
+     about: "Repos, CI, deploys through self-hosted runners, and the bot's PRs"}
   - {id: google, label: Google, sub: "Calendar, Gmail", kind: external, col: 4, row: 3,
-     integrations: [google_calendar, google_email, google_tasks, google_storage]}
+     integrations: [google_calendar, google_email, google_tasks, google_storage],
+     about: "Calendar, Tasks, Gmail and Drive"}
   - {id: pushover, label: Pushover, sub: Phone alerts, kind: external, col: 4, row: 4,
-     integrations: [pushover]}
+     integrations: [pushover],
+     about: "Outage, deploy and job notifications"}
 
 edges:
   - {from: phone, to: console, quiet: true}
