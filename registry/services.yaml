@@ -12,7 +12,9 @@
 #   container   Proxmox VMID it runs in (null for the host itself)
 #   lifecycle   active | planned | retiring   (planned is listed but not checked)
 #   description one line
-#   open_url    where a person opens it, if anywhere (tailnet or LAN)
+#   open_url    where a person opens it, if anywhere. Prefer a tailnet HTTPS URL so it opens from
+#               the phone off-LAN (CT 100's apps use `tailscale serve --https=<port>` on CT 100)
+#   icon        dashboard-icons slug for the console's Apps page (homarr-labs/dashboard-icons)
 #   health      how the poller checks it, from CT 104:
 #                 {type: http, url}      2xx/3xx = up
 #                 {type: tcp, host, port}
@@ -34,6 +36,7 @@ services:
     lifecycle: active
     description: pve, i5-3550, 15 GB RAM; runs every container
     open_url: https://192.168.50.111:8006
+    icon: proxmox
     health: {type: proxmox_host}
 
   - id: postgres
@@ -43,6 +46,16 @@ services:
     lifecycle: active
     description: PG 18 + pgvector; one database per Sazed service
     health: {type: tcp, host: 192.168.50.205, port: 5432}
+
+  - id: netguard
+    name: AdGuard Home
+    group: infra
+    container: 111
+    lifecycle: active
+    description: DNS ad and tracker blocking for the tailnet (plan 08; parked until tailnet DNS points at it)
+    open_url: https://netguard.tail77c590.ts.net
+    icon: adguard-home
+    health: {type: tcp, host: 192.168.50.170, port: 53}  # admin UI is localhost-only
 
   - id: claude-code
     name: Claude Code host
@@ -139,16 +152,6 @@ services:
     description: LiveSync + CouchDB + vault service (plan 05)
     depends_on: []
 
-  - id: home-lab-dashboard
-    name: Home lab dashboard
-    group: infra
-    container: 102
-    lifecycle: retiring
-    description: Superseded by the console's Homelab page
-    open_url: https://home-lab-dashboard.tail77c590.ts.net
-    health: {type: container}  # Next.js listens on localhost only
-    repo: tharpep/home-lab-dashboard
-
   # --- Apps -----------------------------------------------------------------------------
   - id: chat-service
     name: SillyTavern
@@ -157,6 +160,7 @@ services:
     lifecycle: active
     description: SillyTavern + Ollama
     open_url: https://chat-service.tail77c590.ts.net
+    icon: sillytavern
     health: {type: container}  # localhost only behind tailscale serve
 
   - id: jellyfin
@@ -165,7 +169,8 @@ services:
     container: 100
     lifecycle: active
     description: Media server
-    open_url: http://192.168.50.117:8096
+    open_url: https://media.tail77c590.ts.net:8096
+    icon: jellyfin
     health: {type: http, url: http://192.168.50.117:8096/health}
 
   - id: jellyseerr
@@ -174,7 +179,8 @@ services:
     container: 100
     lifecycle: active
     description: Media requests
-    open_url: http://192.168.50.117:5055
+    open_url: https://media.tail77c590.ts.net:5055
+    icon: jellyseerr
     health: {type: http, url: http://192.168.50.117:5055/api/v1/status}
     depends_on: [jellyfin, radarr, sonarr]
 
@@ -184,7 +190,8 @@ services:
     container: 100
     lifecycle: active
     description: Movies
-    open_url: http://192.168.50.117:7878
+    open_url: https://media.tail77c590.ts.net:7878
+    icon: radarr
     health: {type: http, url: http://192.168.50.117:7878/ping}
     depends_on: [prowlarr, qbittorrent]
 
@@ -194,7 +201,8 @@ services:
     container: 100
     lifecycle: active
     description: TV
-    open_url: http://192.168.50.117:8989
+    open_url: https://media.tail77c590.ts.net:8989
+    icon: sonarr
     health: {type: http, url: http://192.168.50.117:8989/ping}
     depends_on: [prowlarr, qbittorrent]
 
@@ -204,7 +212,8 @@ services:
     container: 100
     lifecycle: active
     description: Indexers
-    open_url: http://192.168.50.117:9696
+    open_url: https://media.tail77c590.ts.net:9696
+    icon: prowlarr
     health: {type: http, url: http://192.168.50.117:9696/ping}
     depends_on: [flaresolverr]
 
@@ -214,7 +223,8 @@ services:
     container: 100
     lifecycle: active
     description: Downloads, routed through the gluetun VPN container
-    open_url: http://192.168.50.117:8080
+    open_url: https://media.tail77c590.ts.net:8080
+    icon: qbittorrent
     health: {type: http, url: http://192.168.50.117:8080/}
 
   - id: flaresolverr
@@ -231,7 +241,8 @@ services:
     container: 100
     lifecycle: active
     description: Books and comics
-    open_url: http://192.168.50.117:5000
+    open_url: https://media.tail77c590.ts.net:5000
+    icon: kavita
     health: {type: http, url: http://192.168.50.117:5000/api/health}
 
   - id: suwayomi
@@ -240,7 +251,8 @@ services:
     container: 100
     lifecycle: active
     description: Manga (primary)
-    open_url: http://192.168.50.117:4567
+    open_url: https://media.tail77c590.ts.net:4567
+    icon: suwayomi
     health: {type: http, url: http://192.168.50.117:4567/}
 
   - id: suwayomi-second
@@ -249,5 +261,6 @@ services:
     container: 100
     lifecycle: active
     description: Manga (second instance, own VPN)
-    open_url: http://192.168.50.117:4568
+    open_url: https://media.tail77c590.ts.net:4568
+    icon: suwayomi
     health: {type: http, url: http://192.168.50.117:4568/}

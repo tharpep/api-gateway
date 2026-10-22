@@ -76,6 +76,9 @@ nodes:
      about: "Databases for the services, with pgvector"}
   - {id: media, label: Media apps, kind: homelab, col: 3, row: 6, services_group: apps,
      public: false}
+  - {id: netguard, label: AdGuard, sub: "DNS, CT 111", kind: homelab, col: 2, row: 6,
+     services: [netguard], public: false,
+     about: "Blocks ads and trackers by DNS for tailnet devices (parked)"}
 
   # Outside services
   - {id: anthropic, label: Anthropic, sub: Claude models, kind: external, col: 4, row: 0,

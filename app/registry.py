@@ -42,6 +42,7 @@ class ServiceDef(BaseModel):
     lifecycle: Literal["active", "planned", "retiring"] = "active"
     description: str = ""
     open_url: str | None = None
+    icon: str | None = None
     health: HealthCheck | None = None
     depends_on: list[str] = []
     repo: str | None = None
