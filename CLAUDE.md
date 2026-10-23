@@ -59,7 +59,7 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
 **Fully implemented:**
 
 - `health.py` — `GET /health` (public)
-- `notify.py` — `POST /notify` via Pushover
+- `notify.py` — Pushover. `POST /notify` (title, message, url; optional `document` and base64 image attachment) and `POST /notify/file` (multipart). Images up to 5 MB ride along as the attachment; a long document or any other file is stored in `phone_items` (migration 004, kept 30 days) and the notification links to `GET /notify/items/{id}` (page) and `/items/{id}/file`. Non-image files are always served as downloads, so uploaded HTML/SVG can't run script on this origin. On GCP the shared migration counter means 004 is skipped (Sazed already has a 004), so stored items only work on the homelab.
 - `ai.py` — OpenAI-compatible LLM proxy (`/ai/v1/chat/completions`, `/ai/v1/chat/completions/stream`, `/ai/v1/models`)
 - `calendar.py` — Google Calendar full CRUD:
   - `GET /calendar/today`, `GET /calendar/events`, `GET /calendar/availability`
@@ -144,7 +144,7 @@ An in-memory ring buffer (2,000 events) of what the gateway does on its own:
 
 ### MCP (`app/mcp_server.py`)
 
-Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON responses) mounted at `/mcp/` (trailing slash). Tools wrap the router functions directly so MCP and REST share one code path and the same limits. The API key is checked by an ASGI guard around the mounted app, since FastAPI dependencies don't reach mounts. The session manager runs inside the FastAPI lifespan. Clients connect at `https://sazed.tail77c590.ts.net/gw/mcp/` (Caddy on CT 106 injects the key). Current tools: `homelab_overview`, `homelab_services`, `homelab_container`, `homelab_restart_container`, `homelab_start_container`, plus the worker job tools (plans/07): `research`, `second_opinion`, `delegate_code_task`, `continue_job`, `job_status`, `list_jobs`. Those call Sazed's `/jobs` API (`SAZED_URL`, `SAZED_API_KEY`) with requested_by `mcp`: uncapped, and code tasks wait for approval in the console. Research and second opinions wait up to 50 s, then return a job_id.
+Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON responses) mounted at `/mcp/` (trailing slash). Tools wrap the router functions directly so MCP and REST share one code path and the same limits. The API key is checked by an ASGI guard around the mounted app, since FastAPI dependencies don't reach mounts. The session manager runs inside the FastAPI lifespan. Clients connect at `https://sazed.tail77c590.ts.net/gw/mcp/` (Caddy on CT 106 injects the key). Current tools: `send_to_phone` (wraps `notify.deliver`), `homelab_overview`, `homelab_services`, `homelab_container`, `homelab_restart_container`, `homelab_start_container`, plus the worker job tools (plans/07): `research`, `second_opinion`, `delegate_code_task`, `continue_job`, `job_status`, `list_jobs`. Those call Sazed's `/jobs` API (`SAZED_URL`, `SAZED_API_KEY`) with requested_by `mcp`: uncapped, and code tasks wait for approval in the console. Research and second opinions wait up to 50 s, then return a job_id.
 
 **Stub / not yet implemented:**
 - `context.py` — `GET /context/now` returns placeholder; aggregated context snapshot not built yet

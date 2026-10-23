@@ -22,7 +22,7 @@ from app import activity
 from app.config import settings
 from app.dependencies import verify_api_key
 from app.http_client import get_client
-from app.routers import homelab, services
+from app.routers import homelab, notify, services
 
 mcp = FastMCP(
     "sazed-gateway",
@@ -34,7 +34,8 @@ mcp = FastMCP(
         "Job tools hand work to Sazed's worker on the homelab: research and second opinions run "
         "on Gemini (Antigravity) with Google search; code tasks run on Claude Code and wait for "
         "Pryce's approval in the Sazed console before they start. Long jobs return a job_id; "
-        "check it with job_status."
+        "check it with job_status. send_to_phone puts a link, a short note or a long document "
+        "in front of Pryce on his phone (Pushover)."
     ),
     stateless_http=True,
     json_response=True,
@@ -125,6 +126,40 @@ async def homelab_restart_container(vmid: int) -> dict:
 async def homelab_start_container(vmid: int) -> dict:
     """Start a stopped container. Only containers the gateway's power token may manage."""
     return await _call(homelab.start_container(vmid))
+
+
+# ---------------------------------------------------------------- phone
+
+_PHONE_PRIORITY = {
+    "quiet": notify.Priority.LOW,
+    "normal": notify.Priority.NORMAL,
+    "high": notify.Priority.HIGH,
+}
+
+
+@mcp.tool()
+async def send_to_phone(
+    title: str,
+    message: str,
+    url: str | None = None,
+    url_title: str | None = None,
+    document: str | None = None,
+    priority: Literal["quiet", "normal", "high"] = "normal",
+) -> dict:
+    """Push something to Pryce's phone through Pushover.
+
+    Keep `title` to a few words (it must fit one line) and `message` to a sentence or two.
+    Put a link in `url` (a tap-able button), not in the text. For anything longer, such as
+    notes, a plan or a report, pass it as `document` (markdown, up to 200k characters): it is
+    stored for 30 days and the notification opens it. Never send secrets in plain text;
+    Pushover is a third party. To send a local file or image, POST it with curl instead:
+    curl -F title=... -F message=... -F file=@path https://sazed.tail77c590.ts.net/gw/notify/file
+    """
+    return await _call(
+        notify.deliver(
+            title, message, _PHONE_PRIORITY[priority], url, url_title, document
+        )
+    )
 
 
 # ---------------------------------------------------------------- Sazed worker jobs
