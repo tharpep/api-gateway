@@ -172,15 +172,16 @@ services:
     open_url: https://media.tail77c590.ts.net:8096
     icon: jellyfin
     health: {type: http, url: http://192.168.50.117:8096/health}
+    repo: tharpep/media_server  # both CT 100 stacks deploy from it; failed deploys alert
 
   - id: jellyseerr
-    name: Jellyseerr
+    name: Seerr
     group: apps
     container: 100
     lifecycle: active
-    description: Media requests
+    description: Media requests (Seerr, the Jellyseerr + Overseerr merge; id kept)
     open_url: https://media.tail77c590.ts.net:5055
-    icon: jellyseerr
+    icon: seerr
     health: {type: http, url: http://192.168.50.117:5055/api/v1/status}
     depends_on: [jellyfin, radarr, sonarr]
 
