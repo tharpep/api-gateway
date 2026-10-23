@@ -47,10 +47,15 @@ async def _proxy(request: Request, method: str, path: str) -> Response:
     except httpx.TimeoutException:
         raise HTTPException(504, "KB service timed out")
 
+    # Keep the download filename on file responses (the export route).
+    passthrough = {}
+    if "content-disposition" in r.headers:
+        passthrough["content-disposition"] = r.headers["content-disposition"]
     return Response(
         content=r.content,
         status_code=r.status_code,
         media_type=r.headers.get("content-type", "application/json"),
+        headers=passthrough,
     )
 
 
@@ -118,3 +123,9 @@ async def kb_ingest_url(request: Request):
 async def kb_source_content(file_id: str, request: Request):
     """Return a KB source's full original text (proxied to KB service)."""
     return await _proxy(request, "GET", f"/kb/sources/{file_id}/content")
+
+
+@router.get("/sources/{file_id}/export")
+async def kb_source_export(file_id: str, request: Request):
+    """Download a KB source's full text as a file, ?format=md (default) or txt (proxied)."""
+    return await _proxy(request, "GET", f"/kb/sources/{file_id}/export")

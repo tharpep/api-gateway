@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import re
 from email.mime.text import MIMEText
 
 from fastapi import APIRouter, HTTPException, Query
@@ -14,6 +15,20 @@ from app.http_client import get_client
 router = APIRouter()
 
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1"
+
+
+# Newsletters pad the inbox preview with invisible characters (zero-width joiners, combining
+# grapheme joiners, soft hyphens) so the snippet shows only their tagline. Strip them and
+# collapse the run of spaces they leave behind; newlines are kept.
+_INVISIBLE = re.compile(
+    "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u202a-\u202e"
+    "\u2060-\u2064\u206a-\u206f\u3164\ufeff\uffa0]"
+)
+_SPACES = re.compile("[ \t\u00a0\u2000-\u200a\u202f\u205f\u3000]+")
+
+
+def _clean_text(text: str) -> str:
+    return _SPACES.sub(" ", _INVISIBLE.sub("", text)).strip()
 
 
 def _decode_body(payload: dict) -> str:
@@ -136,7 +151,7 @@ async def _fetch_messages(query: str, max_results: int = 50) -> list[EmailMessag
                 id=msg_data["id"],
                 subject=hdrs.get("Subject", "(No subject)"),
                 sender=hdrs.get("From", "(Unknown sender)"),
-                snippet=msg_data.get("snippet", ""),
+                snippet=_clean_text(msg_data.get("snippet", "")),
                 date=hdrs.get("Date", ""),
             ))
 
@@ -201,7 +216,7 @@ async def get_message(message_id: str):
 
     msg_data = response.json()
     hdrs = {h["name"]: h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
-    body = _decode_body(msg_data.get("payload", {})) or msg_data.get("snippet", "")
+    body = _clean_text(_decode_body(msg_data.get("payload", {})) or msg_data.get("snippet", ""))
 
     return EmailMessageDetail(
         id=msg_data["id"],
@@ -209,7 +224,7 @@ async def get_message(message_id: str):
         subject=hdrs.get("Subject", "(No subject)"),
         sender=hdrs.get("From", "(Unknown sender)"),
         recipient=hdrs.get("To", ""),
-        snippet=msg_data.get("snippet", ""),
+        snippet=_clean_text(msg_data.get("snippet", "")),
         date=hdrs.get("Date", ""),
         body=body,
     )

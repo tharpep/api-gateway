@@ -78,7 +78,7 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
 - `kb.py` — proxy to the knowledge-base service (requires `KB_SERVICE_URL`; optional `KB_SERVICE_KEY`):
   - `POST /kb/search` — hybrid KB search
   - `POST /kb/ingest/file` (multipart upload), `POST /kb/ingest/text`, `POST /kb/ingest/url` — add content (Drive sync was removed 2026-10-18)
-  - `GET /kb/sources` — list sources, newest first; `GET /kb/sources/{file_id}/content` — full text
+  - `GET /kb/sources` — list sources, newest first; `GET /kb/sources/{file_id}/content` — full text; `GET /kb/sources/{file_id}/export?format=md|txt` — download as a file (the proxy passes Content-Disposition through)
   - `GET /kb/index`, `GET /kb/files`, `GET /kb/stats`
   - `DELETE /kb/files/{file_id}` — remove a source and its stored text
   - `DELETE /kb` — clear entire KB index
