@@ -5,8 +5,10 @@ No LLM involved: these fire on facts the poller already has.
 - Outages: a registry service is confirmed down (two failed checks) or recovers. One message per
   poll cycle lists everything that changed, so a stopped container with ten apps on it sends one
   alert, not ten. Muted services and services in a maintenance window are skipped.
-- Disk: a Proxmox storage pool or a running container's root disk reaches alert_disk_percent.
-  It re-arms once usage drops 5 points below, so a disk sitting at 86% alerts once.
+- Disk: a Proxmox storage pool reaches alert_pool_percent, or a running container's root disk
+  reaches alert_disk_percent. Pools go first because a full thin pool fails writes in every
+  container on it. Each re-arms once usage drops 5 points below, so a disk sitting at 86%
+  alerts once.
 - Deploys: a "Deploy to Homelab" workflow run fails for any active registry repo.
 
 The whole homelab being down can't be reported from inside it; that needs an outside dead-man's
@@ -86,33 +88,42 @@ async def outages(
 
 
 async def disks(containers: list[dict] | None) -> None:
-    """Check storage pools and running containers' root disks against the threshold."""
-    usage: dict[str, tuple[str, float]] = {}
+    """Check storage pools (alert_pool_percent) and running containers' root disks
+    (alert_disk_percent) against their thresholds."""
+    # key -> (label, fraction used, threshold percent, free bytes)
+    usage: dict[str, tuple[str, float, int, int]] = {}
     try:
-        storages = await homelab._pve(
-            "GET", homelab._node("/storage"), settings.proxmox_read_token
-        )
+        storages = await homelab._pve("GET", homelab._node("/storage"), settings.proxmox_read_token)
     except HTTPException:
         storages = None
     for s in storages or []:
         if s.get("active") and s.get("total"):
-            usage[f"storage:{s['storage']}"] = (f"Storage {s['storage']}", s["used"] / s["total"])
+            free = s.get("avail", s["total"] - s["used"])
+            usage[f"storage:{s['storage']}"] = (
+                f"Storage {s['storage']}",
+                s["used"] / s["total"],
+                settings.alert_pool_percent,
+                free,
+            )
     for c in containers or []:
         if c.get("status") == "running" and c.get("disk_total_bytes"):
-            pct = (c.get("disk_used_bytes") or 0) / c["disk_total_bytes"]
-            usage[f"ct:{c['vmid']}"] = (f"CT {c['vmid']} {c.get('name') or ''} disk".strip(), pct)
+            used = c.get("disk_used_bytes") or 0
+            usage[f"ct:{c['vmid']}"] = (
+                f"CT {c['vmid']} {c.get('name') or ''} disk".strip(),
+                used / c["disk_total_bytes"],
+                settings.alert_disk_percent,
+                c["disk_total_bytes"] - used,
+            )
 
-    threshold = settings.alert_disk_percent / 100
-    rearm = (settings.alert_disk_percent - _DISK_REARM_POINTS) / 100
     newly = []
-    for key, (label, pct) in usage.items():
-        if pct >= threshold and key not in _disk_firing:
+    for key, (label, pct, threshold, free) in usage.items():
+        if pct >= threshold / 100 and key not in _disk_firing:
             _disk_firing.add(key)
-            newly.append(f"{label}: {pct:.0%} used")
-        elif pct < rearm:
+            newly.append(f"{label}: {pct:.0%} used, {free / 1024**3:.1f} GB free")
+        elif pct < (threshold - _DISK_REARM_POINTS) / 100:
             _disk_firing.discard(key)
     if newly:
-        title = f"Disk over {settings.alert_disk_percent}%"
+        title = "Disk space low"
         activity.record("disk", title, "error", {"lines": newly})
         await _push(title, "\n".join(newly), Priority.NORMAL)
 

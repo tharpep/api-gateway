@@ -109,6 +109,15 @@ async def host_status():
     }
 
 
+@router.get("/storage")
+async def storage():
+    """Real free space per pool, space left for media, library and download sizes, and each
+    container's disk use. See app/homelab_storage.py for why df inside a container misleads."""
+    from app import homelab_storage  # it imports this module
+
+    return await homelab_storage.overview()
+
+
 @router.get("/containers")
 async def list_containers():
     """All LXC containers with status and resource usage, sorted by VMID."""

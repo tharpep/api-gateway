@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     proxmox_read_token: str = ""
     proxmox_power_token: str = ""
 
+    # Media storage view (GET /homelab/storage). Each source is optional; unset ones are left
+    # out. qBittorrent has no key: its WebUI whitelists the gateway's IP instead.
+    sonarr_url: str = ""
+    sonarr_api_key: str = ""
+    radarr_url: str = ""
+    radarr_api_key: str = ""
+    qbittorrent_url: str = ""
+    media_vmid: int = 100
+    media_mount: str = "/mnt/data"  # CT mount point holding the library and downloads
+
     # Service registry + health poller. The poller starts only where PROXMOX_HOST is set (the
     # homelab), so other deployments of this code don't poll a LAN they can't reach.
     registry_path: str = ""  # empty = registry/services.yaml in the repo
@@ -76,6 +86,8 @@ class Settings(BaseSettings):
     # PROXMOX_HOST). See app/alerts.py.
     alerts_enabled: bool = True
     alert_disk_percent: int = 85  # alert at or above; re-arms below this minus 5
+    # Storage pools alert earlier: a full thin pool fails writes in every container at once.
+    alert_pool_percent: int = 80
     alert_deploy_poll_seconds: int = 300
     console_url: str = "https://sazed.tail77c590.ts.net"
 
