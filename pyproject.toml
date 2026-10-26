@@ -8,22 +8,22 @@ packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-fastapi = "^0.115.0"
-uvicorn = {extras = ["standard"], version = "^0.34.0"}
+fastapi = ">=0.115,<0.162"
+uvicorn = {extras = ["standard"], version = ">=0.34,<0.55"}
 pydantic-settings = "^2.7.0"
 httpx = "^0.28.0"
 python-dotenv = "^1.0.0"
 slowapi = "^0.1.9"
 tzdata = "^2025.3"
 pypdf = "^5.0.0"
-asyncpg = "^0.30.0"
+asyncpg = ">=0.30,<0.33"
 sentry-sdk = {extras = ["fastapi"], version = "^2.65.0"}
 mcp = "^1.20"
 pyjwt = {version = ">=2.10.1", extras = ["crypto"]}  # GitHub App JWTs (app/routers/github_app.py)
 pyyaml = "^6.0"
 
 [tool.poetry.group.dev.dependencies]
-ruff = "^0.9.0"
+ruff = ">=0.9,<0.18"
 
 [build-system]
 requires = ["poetry-core"]
