@@ -8,6 +8,9 @@ the answer follows the mount point with no code change.
 
 Sources are independent: an unset one is null, a failing one is null and listed in `errors`,
 and the rest still return.
+
+Sizes and counts only, never titles or torrent names: Pryce doesn't want what he watches shown
+on the console or handed to MCP clients. Names are one click away in Sonarr/Radarr/qBittorrent.
 """
 
 import asyncio
@@ -20,8 +23,6 @@ from app.http_client import get_client
 from app.routers import homelab
 
 logger = logging.getLogger(__name__)
-
-_LARGEST = 10
 
 
 def _pool_view(s: dict) -> dict:
@@ -62,17 +63,14 @@ async def _arr(base: str, key: str, path: str, params: dict | None = None) -> An
     return r.json()
 
 
-async def _series() -> list[dict]:
+async def _series() -> list[int]:
     rows = await _arr(settings.sonarr_url, settings.sonarr_api_key, "/series")
-    return [
-        {"title": s["title"], "kind": "series", "bytes": s["statistics"].get("sizeOnDisk", 0)}
-        for s in rows
-    ]
+    return [s["statistics"].get("sizeOnDisk", 0) for s in rows]
 
 
-async def _movies() -> list[dict]:
+async def _movies() -> list[int]:
     rows = await _arr(settings.radarr_url, settings.radarr_api_key, "/movie")
-    return [{"title": m["title"], "kind": "movie", "bytes": m.get("sizeOnDisk", 0)} for m in rows]
+    return [m.get("sizeOnDisk", 0) for m in rows]
 
 
 async def _imported(torrent_hash: str) -> bool:
@@ -97,19 +95,11 @@ async def _downloads() -> dict:
         if _arrs()
         else [True] * len(done)
     )
+    stuck = [t.get("size", 0) for t, ok in zip(done, imported, strict=True) if not ok]
     return {
         "torrents": len(torrents),
         "bytes": sum(t.get("size", 0) for t in torrents),
-        "not_imported": [
-            {
-                "name": t["name"],
-                "bytes": t.get("size", 0),
-                "category": t.get("category") or None,
-                "completed_at": t.get("completion_on"),
-            }
-            for t, ok in zip(done, imported, strict=True)
-            if not ok
-        ],
+        "not_imported": {"count": len(stuck), "bytes": sum(stuck)},
     }
 
 
@@ -126,11 +116,11 @@ async def _source(
         return None
 
 
-def _totals(rows: list[dict] | None) -> dict | None:
-    if rows is None:
+def _totals(sizes: list[int] | None) -> dict | None:
+    if sizes is None:
         return None
-    on_disk = [r for r in rows if r["bytes"]]
-    return {"count": len(on_disk), "bytes": sum(r["bytes"] for r in on_disk)}
+    on_disk = [b for b in sizes if b]
+    return {"count": len(on_disk), "bytes": sum(on_disk)}
 
 
 async def overview() -> dict:
@@ -152,7 +142,6 @@ async def overview() -> dict:
     pools = [_pool_view(s) for s in storages or [] if s.get("active") and s.get("total")]
     volume, pool_name = _media_volume(media_config or {})
     media_pool = next((p for p in pools if p["name"] == pool_name), None)
-    items = [i for i in (series or []) + (movies or []) if i["bytes"]]
 
     return {
         "pools": pools,
@@ -164,7 +153,6 @@ async def overview() -> dict:
             "free_bytes": media_pool["free_bytes"] if media_pool else None,
             "series": _totals(series),
             "movies": _totals(movies),
-            "largest": sorted(items, key=lambda i: i["bytes"], reverse=True)[:_LARGEST],
             "downloads": downloads,
         },
         # Proxmox reports each container's root disk only; extra mount points (CT 100's media

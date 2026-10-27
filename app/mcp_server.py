@@ -100,8 +100,9 @@ async def homelab_overview() -> dict:
 @mcp.tool()
 async def homelab_storage() -> dict:
     """Disk space: real free space per Proxmox pool, space left for media (movies, shows),
-    library and download sizes, finished torrents never imported, and each container's disk
-    use. Use this for "how much room is left?"; df inside a container overstates free space."""
+    library and download sizes (counts only, no titles), finished torrents never imported, and
+    each container's disk use. Use this for "how much room is left?"; df inside a container
+    overstates free space."""
     return await _call(homelab.storage())
 
 

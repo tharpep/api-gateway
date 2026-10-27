@@ -93,7 +93,7 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
 
 - `homelab.py` — Proxmox host and container status plus power actions (requires `PROXMOX_HOST`, `PROXMOX_READ_TOKEN`; actions need `PROXMOX_POWER_TOKEN`; `PROXMOX_CA_CERT` points at `pve-root-ca.pem`). Uses its own httpx client because Proxmox has its own CA. Which containers can be started/restarted is decided by the power token's Proxmox ACLs, not by this service; a Proxmox 403 is returned as 403.
   - `GET /homelab/host` — CPU, memory, root disk, uptime, storage pools
-  - `GET /homelab/storage` — where disk space goes (`app/homelab_storage.py`): free space per Proxmox pool; "free for media" = the pool behind CT `MEDIA_VMID`'s `MEDIA_MOUNT` (df inside a container shows its thin volume, not the shared pool, so it overstates); series/movie totals and the largest items from Sonarr/Radarr; torrents from qBittorrent, with finished ones that Sonarr/Radarr never imported (history by `downloadId`); each container's root disk. Each source (`SONARR_URL`/`_API_KEY`, `RADARR_URL`/`_API_KEY`, `QBITTORRENT_URL`) is optional and fails independently into `errors`. qBittorrent has no key: its WebUI auth-bypass whitelist includes CT 104's IP (192.168.50.63, DHCP).
+  - `GET /homelab/storage` — where disk space goes (`app/homelab_storage.py`): free space per Proxmox pool; "free for media" = the pool behind CT `MEDIA_VMID`'s `MEDIA_MOUNT` (df inside a container shows its thin volume, not the shared pool, so it overstates); series/movie counts and sizes from Sonarr/Radarr; torrent count and size from qBittorrent, plus the count and size of finished ones Sonarr/Radarr never imported (history by `downloadId`); each container's root disk. Never titles or torrent names (Pryce's choice: what he watches stays off the console and out of MCP). Each source (`SONARR_URL`/`_API_KEY`, `RADARR_URL`/`_API_KEY`, `QBITTORRENT_URL`) is optional and fails independently into `errors`. qBittorrent has no key: its WebUI auth-bypass whitelist includes CT 104's IP (192.168.50.63, DHCP).
   - `GET /homelab/containers` — all LXC containers with status and usage
   - `GET /homelab/containers/{vmid}` — status, key config, recent start/stop/reboot history
   - `POST /homelab/containers/{vmid}/restart`, `POST /homelab/containers/{vmid}/start`
@@ -106,6 +106,8 @@ Hybrid by design: service **definitions** live in `registry/services.yaml` (git;
   - `PATCH /homelab/services/{id}/state` — `{maintenance_minutes (0 ends), muted, notes}`; omitted fields unchanged
 
 To add a service: add an entry to `registry/services.yaml` and deploy. Never rename an `id`, because state rows hang off it.
+
+**Private services:** this repo is public, so services Pryce doesn't want named live in a second file on CT 104, `/home/ghrunner/sazed-eco/services.private.yaml` (`REGISTRY_PRIVATE_PATH`), outside git. Same fields; its entries are merged in with `private: true` (re-read on change like the main file; a missing file logs a warning and loads the public registry alone). The console hides private services on Home and the Homelab page until Pryce reveals them, and the map's "N services" label doesn't count them.
 
 ### Architecture map (`registry/map.yaml`, `app/arch_map.py`)
 

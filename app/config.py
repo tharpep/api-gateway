@@ -81,6 +81,8 @@ class Settings(BaseSettings):
     # Service registry + health poller. The poller starts only where PROXMOX_HOST is set (the
     # homelab), so other deployments of this code don't poll a LAN they can't reach.
     registry_path: str = ""  # empty = registry/services.yaml in the repo
+    # Extra services kept off GitHub (homelab-only file), merged in and marked private.
+    registry_private_path: str = ""
     health_poll_seconds: int = 60
     # Deterministic Pushover alerts from the health poller (homelab only: the poller needs
     # PROXMOX_HOST). See app/alerts.py.

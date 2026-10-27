@@ -25,6 +25,10 @@
 #   repo        GitHub repo, if it's ours
 #   env_keys    config keys it needs (names only; documents secrets, never values)
 #
+# Private services: this repo is public, so anything Pryce doesn't want named goes in a second
+# file on CT 104 (REGISTRY_PRIVATE_PATH), same fields. Its entries are marked private and the
+# console hides them until revealed.
+#
 # IPs: containers are on DHCP, so LAN addresses live here and in the Caddyfile only.
 
 services:
@@ -153,16 +157,6 @@ services:
     depends_on: []
 
   # --- Apps -----------------------------------------------------------------------------
-  - id: chat-service
-    name: SillyTavern
-    group: apps
-    container: 101
-    lifecycle: active
-    description: SillyTavern + Ollama
-    open_url: https://chat-service.tail77c590.ts.net
-    icon: sillytavern
-    health: {type: container}  # localhost only behind tailscale serve
-
   - id: jellyfin
     name: Jellyfin
     group: apps
@@ -255,13 +249,3 @@ services:
     open_url: https://media.tail77c590.ts.net:4567
     icon: suwayomi
     health: {type: http, url: http://192.168.50.117:4567/}
-
-  - id: suwayomi-second
-    name: Suwayomi (second)
-    group: apps
-    container: 100
-    lifecycle: active
-    description: Manga (second instance, own VPN)
-    open_url: https://media.tail77c590.ts.net:4568
-    icon: suwayomi
-    health: {type: http, url: http://192.168.50.117:4568/}

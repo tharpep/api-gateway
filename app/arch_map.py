@@ -136,6 +136,7 @@ def _service_view(svc, latest: dict, states: dict | None) -> dict[str, Any]:
         "in_maintenance": bool(until and until > datetime.now(UTC)),
         "muted": bool(state.get("muted")),
         "container": svc.container,
+        "private": svc.private,
     }
 
 
@@ -183,7 +184,11 @@ def build(
                 **n.model_dump(
                     exclude={"services", "services_group", "integrations", "public", "public_sub"}
                 ),
-                "sub": n.sub or (f"{len(views)} services" if n.services_group else None),
+                # Private services don't count, so the label doesn't hint at hidden ones.
+                "sub": n.sub
+                or (
+                    f"{sum(not v['private'] for v in views)} services" if n.services_group else None
+                ),
                 "status": status,
                 "services": views,
                 "containers": [by_vmid[v] for v in vmids if v in by_vmid],
