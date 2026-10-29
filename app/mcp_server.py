@@ -176,7 +176,9 @@ async def send_to_phone(
 _WAIT_SECONDS = 50
 _FINAL = {"succeeded", "failed", "cancelled", "timed_out"}
 # needs_input: the worker stopped to ask a question; continue_job answers it (Sazed plans/11).
-_SETTLED = _FINAL | {"needs_input"}
+# paused: a change job stopped by its timeout, tool cap or a worker restart; resume_job continues
+# it (Sazed plans/10 P1.7).
+_SETTLED = _FINAL | {"needs_input", "paused"}
 
 
 async def _sazed(method: str, path: str, body: dict | None = None) -> Any:
@@ -223,6 +225,12 @@ def _job_view(job: dict) -> dict:
         out["question"] = meta.get("question")
         out["note"] = (
             "Waiting on a question. Answer it with continue_job (ask Pryce if you don't know)."
+        )
+    elif job["status"] == "paused":
+        out["pause_reason"] = meta.get("pause_reason")
+        out["note"] = (
+            "Paused before it finished; its work so far is on the draft PR, if it changed files. "
+            "resume_job continues it where it stopped."
         )
     elif job["status"] == "needs_approval":
         out["note"] = "Waiting for Pryce to approve it in the Sazed console (Automations, Jobs)."
@@ -295,11 +303,21 @@ async def delegate_code_task(
 async def continue_job(job_id: str, instruction: str) -> dict:
     """Continue a worker job: the same agent resumes with its context. Works on a finished job
     (a follow-up), a job waiting on a question (status needs_input: pass the answer), or a
-    stopped job (cancelled or timed out: pass new directions to redirect it). On a change job,
+    stopped job (cancelled, timed out or paused: pass new directions to redirect it; to just
+    carry on with a paused job, use resume_job). On a change job,
     the follow-up updates the same pull request (and waits for approval again)."""
     job = await _sazed(
         "POST", f"/jobs/{job_id}/continue", {"instruction": instruction, "requested_by": "mcp"}
     )
+    return await _wait(job)
+
+
+@mcp.tool()
+async def resume_job(job_id: str) -> dict:
+    """Resume a paused change job (stopped by its timeout, tool cap or a worker restart): the
+    same agent session carries on in the same working copy and updates the same draft PR, which
+    is marked ready when the job finishes. Pryce approved the task already, so it queues at once."""
+    job = await _sazed("POST", f"/jobs/{job_id}/resume", {"requested_by": "mcp"})
     return await _wait(job)
 
 
