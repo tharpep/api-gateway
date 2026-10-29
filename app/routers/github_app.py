@@ -174,6 +174,9 @@ class PullRequestFromFiles(BaseModel):
     # update marks that draft ready for review and replaces its title and description.
     draft: bool = False
     ready: bool = False
+    # The PR a follow-up continues (Sazed sends its parent's). If that PR isn't open anymore, the
+    # request is refused before anything is committed: closed work isn't reopened as a new PR.
+    pr_number: int | None = None
 
 
 def _check_path(path: str) -> None:
@@ -237,6 +240,12 @@ async def pull_request_from_files(req: PullRequestFromFiles):
 
     token, _ = await installation_token(req.repo, {"contents": "write", "pull_requests": "write"})
     r = f"/repos/{owner}/{name}"
+    if req.pr_number is not None:
+        existing = await _call("GET", f"{r}/pulls/{req.pr_number}", token)
+        if existing.get("state") != "open" or existing.get("head", {}).get("ref") != req.branch:
+            raise HTTPException(
+                409, f"PR #{req.pr_number} is closed or no longer on {req.branch}; not reopening it"
+            )
     base = req.base or (await _call("GET", r, token))["default_branch"]
     base_sha = await _ref_sha(r, base, token)
     if base_sha is None:
