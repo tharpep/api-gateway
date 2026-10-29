@@ -170,6 +170,10 @@ class PullRequestFromFiles(BaseModel):
     # path -> new content (base64), or null to delete the file
     files: dict[str, str | None]
     base: str | None = None  # defaults to the repo's default branch
+    # A paused job's work so far goes up as a draft (Sazed plans/10 P1.7). `ready` on a later
+    # update marks that draft ready for review and replaces its title and description.
+    draft: bool = False
+    ready: bool = False
 
 
 def _check_path(path: str) -> None:
@@ -178,6 +182,25 @@ def _check_path(path: str) -> None:
         raise HTTPException(422, f"bad path '{path}'")
     if parts[0] == ".git" or path.startswith(".github/workflows/"):
         raise HTTPException(422, f"changes to '{path}' aren't allowed (git internals / workflows)")
+
+
+async def _mark_ready(pr: dict, title: str, body: str, r: str, token: str) -> None:
+    """Replace a draft PR's title and description, then mark it ready (GraphQL only)."""
+    await _call("PATCH", f"{r}/pulls/{pr['number']}", token, json={"title": title, "body": body})
+    if not pr.get("draft"):
+        return
+    data = await _call(
+        "POST",
+        "/graphql",
+        token,
+        json={
+            "query": "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: "
+            "$id}) { pullRequest { isDraft } } }",
+            "variables": {"id": pr["node_id"]},
+        },
+    )
+    if (data or {}).get("errors"):
+        raise HTTPException(502, f"GitHub GraphQL: {data['errors'][0].get('message')}")
 
 
 async def _ref_sha(r: str, branch: str, token: str) -> str | None:
@@ -272,12 +295,21 @@ async def pull_request_from_files(req: PullRequestFromFiles):
     )
     if open_prs:
         pr, updated = open_prs[0], True
+        if req.ready:
+            await _mark_ready(pr, req.title, req.body, r, token)
+            pr["draft"] = False
     else:
         pr = await _call(
             "POST",
             f"{r}/pulls",
             token,
-            json={"title": req.title, "head": req.branch, "base": base, "body": req.body},
+            json={
+                "title": req.title,
+                "head": req.branch,
+                "base": base,
+                "body": req.body,
+                "draft": req.draft and not req.ready,
+            },
         )
         updated = False
     logger.info(
@@ -294,4 +326,5 @@ async def pull_request_from_files(req: PullRequestFromFiles):
         "files": len(entries),
         "updated": updated,
         "head_sha": commit["sha"],
+        "draft": bool(pr.get("draft")),
     }
