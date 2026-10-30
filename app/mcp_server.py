@@ -89,7 +89,7 @@ async def _call(coro):
 
 
 @mcp.tool()
-async def homelab_overview() -> dict:
+async def homelab_overview() -> dict[str, Any]:
     """Proxmox host usage (CPU, memory, disk, storage) plus every container's status and usage."""
     return {
         "host": await _call(homelab.host_status()),
@@ -98,7 +98,7 @@ async def homelab_overview() -> dict:
 
 
 @mcp.tool()
-async def homelab_storage() -> dict:
+async def homelab_storage() -> dict[str, Any]:
     """Disk space: real free space per Proxmox pool, space left for media (movies, shows),
     library and download sizes (counts only, no titles), finished torrents never imported, and
     each container's disk use. Use this for "how much room is left?"; df inside a container
@@ -107,7 +107,7 @@ async def homelab_storage() -> dict:
 
 
 @mcp.tool()
-async def homelab_services(group: str | None = None) -> dict:
+async def homelab_services(group: str | None = None) -> dict[str, Any]:
     """Health of every registered service (Sazed system, apps, infra): up/down, detail,
     since when, and maintenance/mute state. Optional group: sazed | apps | infra."""
     result = await _call(services.list_services(group, compact=True))
@@ -119,20 +119,20 @@ async def homelab_services(group: str | None = None) -> dict:
 
 
 @mcp.tool()
-async def homelab_container(vmid: int) -> dict:
+async def homelab_container(vmid: int) -> dict[str, Any]:
     """One container's live status, key config, and recent start/stop/reboot history."""
     return await _call(homelab.get_container(vmid, task_limit=10))
 
 
 @mcp.tool()
-async def homelab_restart_container(vmid: int) -> dict:
+async def homelab_restart_container(vmid: int) -> dict[str, Any]:
     """Reboot a running container. Its services go down briefly. Confirm with the user first.
     Only containers the gateway's Proxmox power token is allowed to manage can be restarted."""
     return await _call(homelab.restart_container(vmid))
 
 
 @mcp.tool()
-async def homelab_start_container(vmid: int) -> dict:
+async def homelab_start_container(vmid: int) -> dict[str, Any]:
     """Start a stopped container. Only containers the gateway's power token may manage."""
     return await _call(homelab.start_container(vmid))
 
@@ -154,7 +154,7 @@ async def send_to_phone(
     url_title: str | None = None,
     document: str | None = None,
     priority: Literal["quiet", "normal", "high"] = "normal",
-) -> dict:
+) -> dict[str, Any]:
     """Push something to Pryce's phone through Pushover.
 
     Keep `title` to a few words (it must fit one line) and `message` to a sentence or two.
@@ -257,7 +257,7 @@ async def research(
     question: str,
     depth: Literal["quick", "deep"] = "quick",
     save_to_kb: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Research a question on the web with Sazed's worker (Gemini 3.8 Flash via Antigravity,
     live Google Search, reads pages, cites sources). quick is about a minute, deep several
     minutes. Returns the answer, or a job_id if it's still running. save_to_kb keeps the result
@@ -271,7 +271,7 @@ async def research(
 
 
 @mcp.tool()
-async def second_opinion(subject: str, context: str = "") -> dict:
+async def second_opinion(subject: str, context: str = "") -> dict[str, Any]:
     """An independent second opinion from a different model family (Gemini) on a plan,
     decision, design or answer. Put the full thing to judge in `subject`. Returns a verdict,
     concerns and alternatives, or a job_id if it's still running."""
@@ -286,7 +286,7 @@ async def second_opinion(subject: str, context: str = "") -> dict:
 @mcp.tool()
 async def delegate_code_task(
     repo: str, instruction: str, mode: Literal["review", "change"] = "review"
-) -> dict:
+) -> dict[str, Any]:
     """Queue a code task on one of Pryce's repos for Claude Code on the homelab worker.
     review: read-only analysis. change: edits become a pull request from the sazed-worker bot
     that Pryce merges himself. Either way it waits for Pryce's approval in the Sazed console
@@ -300,7 +300,7 @@ async def delegate_code_task(
 
 
 @mcp.tool()
-async def continue_job(job_id: str, instruction: str) -> dict:
+async def continue_job(job_id: str, instruction: str) -> dict[str, Any]:
     """Continue a worker job: the same agent resumes with its context. Works on a finished job
     (a follow-up), a job waiting on a question (status needs_input: pass the answer), or a
     stopped job (cancelled, timed out or paused: pass new directions to redirect it; to just
@@ -313,7 +313,7 @@ async def continue_job(job_id: str, instruction: str) -> dict:
 
 
 @mcp.tool()
-async def resume_job(job_id: str) -> dict:
+async def resume_job(job_id: str) -> dict[str, Any]:
     """Resume a paused change job (stopped by its timeout, tool cap or a worker restart): the
     same agent session carries on in the same working copy and updates the same draft PR, which
     is marked ready when the job finishes. Pryce approved the task already, so it queues at once."""
@@ -322,14 +322,14 @@ async def resume_job(job_id: str) -> dict:
 
 
 @mcp.tool()
-async def job_status(job_id: str) -> dict:
+async def job_status(job_id: str) -> dict[str, Any]:
     """A worker job's status, its last few steps, its question if it's waiting on one
     (needs_input), and its result, PR link and CI state once available."""
     return _job_view(await _sazed("GET", f"/jobs/{job_id}?events=false"))
 
 
 @mcp.tool()
-async def cancel_job(job_id: str) -> dict:
+async def cancel_job(job_id: str) -> dict[str, Any]:
     """Stop a worker job (queued, running, waiting for approval, or waiting on a question).
     Its agent session is kept, so continue_job can redirect it with new directions a few
     seconds later, once the worker has reported in."""
@@ -337,7 +337,7 @@ async def cancel_job(job_id: str) -> dict:
 
 
 @mcp.tool()
-async def list_jobs(limit: int = 10) -> dict:
+async def list_jobs(limit: int = 10) -> dict[str, Any]:
     """Recent worker jobs (research, second opinions, code tasks) with status and a preview."""
     data = await _sazed("GET", f"/jobs?limit={max(1, min(limit, 50))}")
     return {
