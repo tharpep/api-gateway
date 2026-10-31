@@ -59,7 +59,7 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
 **Fully implemented:**
 
 - `health.py` — `GET /health` (public)
-- `notify.py` — Pushover. `POST /notify` (title, message, url; optional `document` and base64 image attachment) and `POST /notify/file` (multipart). Images up to 5 MB ride along as the attachment; a long document or any other file is stored in `phone_items` (migration 004, kept 30 days) and the notification links to `GET /notify/items/{id}` (page) and `/items/{id}/file`. Non-image files are always served as downloads, so uploaded HTML/SVG can't run script on this origin. On GCP the shared migration counter means 004 is skipped (Sazed already has a 004), so stored items only work on the homelab.
+- `notify.py` — Pushover. `POST /notify` (title, message, url; optional `document` and base64 image attachment), `POST /notify/file` (multipart), and `POST /notify/glance` (silent lock-screen/complication updates via Pushover Glances: title, text, subtext, count, percent, device). Images up to 5 MB ride along as the attachment; a long document or any other file is stored in `phone_items` (migration 004, kept 30 days) and the notification links to `GET /notify/items/{id}` (page) and `/items/{id}/file`. Non-image files are always served as downloads, so uploaded HTML/SVG can't run script on this origin. On GCP the shared migration counter means 004 is skipped (Sazed already has a 004), so stored items only work on the homelab.
 - `ai.py` — OpenAI-compatible LLM proxy (`/ai/v1/chat/completions`, `/ai/v1/chat/completions/stream`, `/ai/v1/models`)
 - `calendar.py` — Google Calendar full CRUD:
   - `GET /calendar/today`, `GET /calendar/events`, `GET /calendar/availability`

@@ -20,14 +20,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
+PUSHOVER_GLANCES_URL = "https://api.pushover.net/1/glances.json"
 
 
 class Priority(IntEnum):
-    LOWEST = -2      # No notification, just badge
-    LOW = -1         # Quiet notification
-    NORMAL = 0       # Normal notification
-    HIGH = 1         # Bypass quiet hours
-    EMERGENCY = 2    # Requires acknowledgment
+    LOWEST = -2  # No notification, just badge
+    LOW = -1  # Quiet notification
+    NORMAL = 0  # Normal notification
+    HIGH = 1  # Bypass quiet hours
+    EMERGENCY = 2  # Requires acknowledgment
 
 
 # Anything that doesn't fit a notification (a long document, a file Pushover can't attach) is
@@ -58,6 +59,20 @@ class NotificationResponse(BaseModel):
     status: int
     request: str
     link: str | None = None  # item page, when something was stored
+
+
+class GlanceRequest(BaseModel):
+    title: str | None = Field(None, max_length=100)
+    text: str | None = Field(None, max_length=100)
+    subtext: str | None = Field(None, max_length=100)
+    count: int | None = None
+    percent: int | None = Field(None, ge=0, le=100)
+    device: str | None = Field(None, max_length=50)
+
+
+class GlanceResponse(BaseModel):
+    status: int
+    request: str
 
 
 # Notifications, not reports: a title has to fit one line on a phone, and the body a glance.
@@ -92,10 +107,7 @@ async def send_pushover(
     `attachment` is (filename, bytes, content type): an image of at most 5 MB.
     """
     if not settings.pushover_user_key or not settings.pushover_api_token:
-        raise HTTPException(
-            status_code=503,
-            detail="Pushover credentials not configured"
-        )
+        raise HTTPException(status_code=503, detail="Pushover credentials not configured")
 
     payload = {
         "token": settings.pushover_api_token,
@@ -111,7 +123,7 @@ async def send_pushover(
         payload["url_title"] = _clamp(url_title, 40)
 
     if priority == Priority.EMERGENCY:
-        payload["retry"] = 60       # Retry every 60 seconds
+        payload["retry"] = 60  # Retry every 60 seconds
         payload["expire"] = 3600
 
     files = {"attachment": attachment} if attachment else None
@@ -126,18 +138,85 @@ async def send_pushover(
     if response.status_code != 200:
         activity.record("notify", payload["title"], "error", detail | {"error": response.text})
         raise HTTPException(
-            status_code=response.status_code,
-            detail=f"Pushover API error: {response.text}"
+            status_code=response.status_code, detail=f"Pushover API error: {response.text}"
         )
 
     data = response.json()
     if data.get("status") != 1:
         activity.record("notify", payload["title"], "error", detail | {"error": str(data)})
         raise HTTPException(
-            status_code=400,
-            detail=f"Pushover rejected: {data.get('errors', 'Unknown error')}"
+            status_code=400, detail=f"Pushover rejected: {data.get('errors', 'Unknown error')}"
         )
     activity.record("notify", payload["title"], "ok", detail)
+    return data
+
+
+async def send_glance(
+    title: str | None = None,
+    text: str | None = None,
+    subtext: str | None = None,
+    count: int | None = None,
+    percent: int | None = None,
+    device: str | None = None,
+) -> dict:
+    if not settings.pushover_user_key or not settings.pushover_api_token:
+        raise HTTPException(
+            status_code=503,
+            detail="Pushover credentials not configured",
+        )
+
+    payload = {
+        "token": settings.pushover_api_token,
+        "user": settings.pushover_user_key,
+    }
+    if title:
+        payload["title"] = _clamp(title, 100)
+    if text:
+        payload["text"] = _clamp(text, 100)
+    if subtext:
+        payload["subtext"] = _clamp(subtext, 100)
+    if count is not None:
+        payload["count"] = count
+    if percent is not None:
+        payload["percent"] = max(0, min(100, int(percent)))
+    if device:
+        payload["device"] = device
+
+    response = await get_client().post(PUSHOVER_GLANCES_URL, data=payload)
+    detail = {
+        "title": title,
+        "text": text,
+        "subtext": subtext,
+        "count": count,
+        "percent": percent,
+        "device": device,
+    }
+
+    if response.status_code != 200:
+        activity.record(
+            "notify_glance",
+            text or title or "glance",
+            "error",
+            detail | {"error": response.text},
+        )
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Pushover Glances API error: {response.text}",
+        )
+
+    data = response.json()
+    if data.get("status") != 1:
+        activity.record(
+            "notify_glance",
+            text or title or "glance",
+            "error",
+            detail | {"error": str(data)},
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Pushover rejected glance: {data.get('errors', 'Unknown error')}",
+        )
+    activity.record("notify_glance", text or title or "glance", "ok", detail)
     return data
 
 
@@ -175,7 +254,14 @@ async def _store_item(
             "INSERT INTO phone_items "
             "(id, expires_at, title, body, link, file_name, content_type, file_data) "
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-            item_id, datetime.now(UTC) + ITEM_TTL, title, body, link, name, content_type, data,
+            item_id,
+            datetime.now(UTC) + ITEM_TTL,
+            title,
+            body,
+            link,
+            name,
+            content_type,
+            data,
         )
     return item_id
 
@@ -258,6 +344,19 @@ async def send_file(
     )
 
 
+@router.post("/glance", response_model=GlanceResponse)
+async def update_glance(glance: GlanceRequest):
+    data = await send_glance(
+        title=glance.title,
+        text=glance.text,
+        subtext=glance.subtext,
+        count=glance.count,
+        percent=glance.percent,
+        device=glance.device,
+    )
+    return {"status": data["status"], "request": data["request"]}
+
+
 # ---------------------------------------------------------------- item pages
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
@@ -304,8 +403,10 @@ def _linkify(text: str) -> str:
 
 async def _get_item(item_id: uuid.UUID, with_file: bool) -> asyncpg.Record:
     pool = await _get_pool()
-    columns = "*" if with_file else (
-        "id, created_at, expires_at, title, body, link, file_name, content_type"
+    columns = (
+        "*"
+        if with_file
+        else ("id, created_at, expires_at, title, body, link, file_name, content_type")
     )
     row = await pool.fetchrow(
         f"SELECT {columns} FROM phone_items WHERE id = $1 AND expires_at > NOW()", item_id
