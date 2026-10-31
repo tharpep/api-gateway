@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     alert_pool_percent: int = 80
     alert_deploy_poll_seconds: int = 300
     console_url: str = "https://sazed.tail77c590.ts.net"
+    # The console's card build, over the LAN: CT 104 isn't on the tailnet.
+    cards_url: str = "http://192.168.50.155:8081/cards/widget.html"
 
     # Observability — error tracking (Sentry). Empty DSN = fully disabled, no-op;
     # nothing to configure unless/until a Sentry project exists.

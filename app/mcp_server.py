@@ -22,7 +22,7 @@ from app import activity
 from app.config import settings
 from app.dependencies import verify_api_key
 from app.http_client import get_client
-from app.routers import homelab, notify, services
+from app.routers import calendar, homelab, notify, services
 
 mcp = FastMCP(
     "sazed-gateway",
@@ -88,6 +88,50 @@ async def _call(coro):
         raise ToolError(str(e.detail)) from e
 
 
+# MCP Apps cards: tools point at a ui:// page, and hosts that support it (Claude Desktop) draw the
+# tool's structured result with the same widget the console uses. Other clients just get the data.
+_CARD_MIME = "text/html;profile=mcp-app"
+_CARD_CACHE_SECONDS = 300
+_card_cache: tuple[float, str] | None = None
+
+
+def _card(widget: str) -> dict[str, Any]:
+    uri = f"ui://sazed/{widget}.html"
+    return {"ui": {"resourceUri": uri}, "ui/resourceUri": uri}
+
+
+async def _card_html() -> str:
+    """The console's single-file card build. A failed refresh keeps the last good copy."""
+    global _card_cache
+    if _card_cache and time.monotonic() - _card_cache[0] < _CARD_CACHE_SECONDS:
+        return _card_cache[1]
+    try:
+        resp = await get_client().get(settings.cards_url, timeout=10.0)
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        if _card_cache:
+            return _card_cache[1]
+        raise
+    _card_cache = (time.monotonic(), resp.text)
+    return resp.text
+
+
+def _register_card(widget: str) -> None:
+    # The widgets draw their own border, so the host's would be a second one.
+    @mcp.resource(
+        _card(widget)["ui"]["resourceUri"],
+        name=f"{widget} card",
+        mime_type=_CARD_MIME,
+        meta={"ui": {"prefersBorder": False}},
+    )
+    async def card() -> str:
+        return (await _card_html()).replace("__WIDGET__", widget)
+
+
+_register_card("HomelabWidget")
+_register_card("CalendarWidget")
+
+
 @mcp.tool()
 async def homelab_overview() -> dict[str, Any]:
     """Proxmox host usage (CPU, memory, disk, storage) plus every container's status and usage."""
@@ -106,7 +150,7 @@ async def homelab_storage() -> dict[str, Any]:
     return await _call(homelab.storage())
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("HomelabWidget"))
 async def homelab_services(group: str | None = None) -> dict[str, Any]:
     """Health of every registered service (Sazed system, apps, infra): up/down, detail,
     since when, and maintenance/mute state. Optional group: sazed | apps | infra."""
@@ -144,6 +188,13 @@ _PHONE_PRIORITY = {
     "normal": notify.Priority.NORMAL,
     "high": notify.Priority.HIGH,
 }
+
+
+@mcp.tool(meta=_card("CalendarWidget"))
+async def calendar_today() -> dict[str, Any]:
+    """Today's calendar events from Pryce's primary Google Calendar."""
+    today = await _call(calendar.get_today())
+    return today.model_dump()
 
 
 @mcp.tool()
