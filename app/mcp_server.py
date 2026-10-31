@@ -224,8 +224,10 @@ async def show_card(
 ) -> dict[str, Any]:
     """Draw a short summary card in the chat, for a few numbers or rows that read better as a
     card than as prose. Skip it for long content, and when another tool already draws a card.
-    Shows up to 4 stats and 6 rows. Leave tone unset for healthy things: attention means waiting
-    on Pryce, problem means broken. Hosts that can't draw cards just get the data back."""
+    stats: up to 4 of {label, value, tone}, where value is a string. rows: up to 6 of
+    {label, value, tone}, where value is optional. tone: leave unset for healthy things,
+    "attention" means waiting on Pryce, "problem" means broken. Hosts that can't draw cards just
+    get the data back."""
     return {
         "title": title,
         "subtitle": subtitle,
