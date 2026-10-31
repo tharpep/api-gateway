@@ -128,8 +128,15 @@ def _register_card(widget: str) -> None:
         return (await _card_html()).replace("__WIDGET__", widget)
 
 
-_register_card("HomelabWidget")
-_register_card("CalendarWidget")
+for _widget in (
+    "HomelabWidget",
+    "CalendarWidget",
+    "StorageWidget",
+    "ContainerWidget",
+    "JobWidget",
+    "JobsWidget",
+):
+    _register_card(_widget)
 
 
 @mcp.tool()
@@ -141,7 +148,7 @@ async def homelab_overview() -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("StorageWidget"))
 async def homelab_storage() -> dict[str, Any]:
     """Disk space: real free space per Proxmox pool, space left for media (movies, shows),
     library and download sizes (counts only, no titles), finished torrents never imported, and
@@ -162,7 +169,7 @@ async def homelab_services(group: str | None = None) -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("ContainerWidget"))
 async def homelab_container(vmid: int) -> dict[str, Any]:
     """One container's live status, key config, and recent start/stop/reboot history."""
     return await _call(homelab.get_container(vmid, task_limit=10))
@@ -334,7 +341,7 @@ async def second_opinion(subject: str, context: str = "") -> dict[str, Any]:
     return await _wait(job)
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("JobWidget"))
 async def delegate_code_task(
     repo: str, instruction: str, mode: Literal["review", "change"] = "review"
 ) -> dict[str, Any]:
@@ -372,7 +379,7 @@ async def resume_job(job_id: str) -> dict[str, Any]:
     return await _wait(job)
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("JobWidget"))
 async def job_status(job_id: str) -> dict[str, Any]:
     """A worker job's status, its last few steps, its question if it's waiting on one
     (needs_input), and its result, PR link and CI state once available."""
@@ -387,7 +394,7 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
     return _job_view(await _sazed("POST", f"/jobs/{job_id}/cancel"))
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("JobsWidget"))
 async def list_jobs(limit: int = 10) -> dict[str, Any]:
     """Recent worker jobs (research, second opinions, code tasks) with status and a preview."""
     data = await _sazed("GET", f"/jobs?limit={max(1, min(limit, 50))}")
