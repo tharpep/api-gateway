@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import BaseModel
 
 from app import activity
 from app.config import settings
@@ -135,6 +136,7 @@ for _widget in (
     "ContainerWidget",
     "JobWidget",
     "JobsWidget",
+    "InfoCard",
 ):
     _register_card(_widget)
 
@@ -195,6 +197,42 @@ _PHONE_PRIORITY = {
     "normal": notify.Priority.NORMAL,
     "high": notify.Priority.HIGH,
 }
+
+
+_Tone = Literal["normal", "attention", "problem"]
+
+
+class CardStat(BaseModel):
+    label: str
+    value: str
+    tone: _Tone | None = None
+
+
+class CardRow(BaseModel):
+    label: str
+    value: str | None = None
+    tone: _Tone | None = None
+
+
+@mcp.tool(meta=_card("InfoCard"))
+async def show_card(
+    title: str,
+    subtitle: str | None = None,
+    stats: list[CardStat] | None = None,
+    rows: list[CardRow] | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Draw a short summary card in the chat, for a few numbers or rows that read better as a
+    card than as prose. Skip it for long content, and when another tool already draws a card.
+    Shows up to 4 stats and 6 rows. Leave tone unset for healthy things: attention means waiting
+    on Pryce, problem means broken. Hosts that can't draw cards just get the data back."""
+    return {
+        "title": title,
+        "subtitle": subtitle,
+        "stats": [s.model_dump() for s in stats or []],
+        "rows": [r.model_dump() for r in rows or []],
+        "note": note,
+    }
 
 
 @mcp.tool(meta=_card("CalendarWidget"))
