@@ -17,12 +17,13 @@ from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import BaseModel
 
 from app import activity
 from app.config import settings
 from app.dependencies import verify_api_key
 from app.http_client import get_client
-from app.routers import homelab, notify, services
+from app.routers import calendar, homelab, notify, services
 
 mcp = FastMCP(
     "sazed-gateway",
@@ -88,6 +89,58 @@ async def _call(coro):
         raise ToolError(str(e.detail)) from e
 
 
+# MCP Apps cards: tools point at a ui:// page, and hosts that support it (Claude Desktop) draw the
+# tool's structured result with the same widget the console uses. Other clients just get the data.
+_CARD_MIME = "text/html;profile=mcp-app"
+_CARD_CACHE_SECONDS = 300
+_card_cache: tuple[float, str] | None = None
+
+
+def _card(widget: str) -> dict[str, Any]:
+    uri = f"ui://sazed/{widget}.html"
+    return {"ui": {"resourceUri": uri}, "ui/resourceUri": uri}
+
+
+async def _card_html() -> str:
+    """The console's single-file card build. A failed refresh keeps the last good copy."""
+    global _card_cache
+    if _card_cache and time.monotonic() - _card_cache[0] < _CARD_CACHE_SECONDS:
+        return _card_cache[1]
+    try:
+        resp = await get_client().get(settings.cards_url, timeout=10.0)
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        if _card_cache:
+            return _card_cache[1]
+        raise
+    _card_cache = (time.monotonic(), resp.text)
+    return resp.text
+
+
+def _register_card(widget: str) -> None:
+    # The widgets draw their own border, so the host's would be a second one.
+    @mcp.resource(
+        _card(widget)["ui"]["resourceUri"],
+        name=f"{widget} card",
+        mime_type=_CARD_MIME,
+        meta={"ui": {"prefersBorder": False}},
+    )
+    async def card() -> str:
+        return (await _card_html()).replace("__WIDGET__", widget)
+
+
+for _widget in (
+    "HomelabWidget",
+    "CalendarWidget",
+    "StorageWidget",
+    "ContainerWidget",
+    "JobWidget",
+    "JobsWidget",
+    "InfoCard",
+):
+    _register_card(_widget)
+
+
 @mcp.tool()
 async def homelab_overview() -> dict[str, Any]:
     """Proxmox host usage (CPU, memory, disk, storage) plus every container's status and usage."""
@@ -97,7 +150,7 @@ async def homelab_overview() -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("StorageWidget"))
 async def homelab_storage() -> dict[str, Any]:
     """Disk space: real free space per Proxmox pool, space left for media (movies, shows),
     library and download sizes (counts only, no titles), finished torrents never imported, and
@@ -106,7 +159,7 @@ async def homelab_storage() -> dict[str, Any]:
     return await _call(homelab.storage())
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("HomelabWidget"))
 async def homelab_services(group: str | None = None) -> dict[str, Any]:
     """Health of every registered service (Sazed system, apps, infra): up/down, detail,
     since when, and maintenance/mute state. Optional group: sazed | apps | infra."""
@@ -118,7 +171,7 @@ async def homelab_services(group: str | None = None) -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("ContainerWidget"))
 async def homelab_container(vmid: int) -> dict[str, Any]:
     """One container's live status, key config, and recent start/stop/reboot history."""
     return await _call(homelab.get_container(vmid, task_limit=10))
@@ -144,6 +197,51 @@ _PHONE_PRIORITY = {
     "normal": notify.Priority.NORMAL,
     "high": notify.Priority.HIGH,
 }
+
+
+_Tone = Literal["normal", "attention", "problem"]
+
+
+class CardStat(BaseModel):
+    label: str
+    value: str
+    tone: _Tone | None = None
+
+
+class CardRow(BaseModel):
+    label: str
+    value: str | None = None
+    tone: _Tone | None = None
+
+
+@mcp.tool(meta=_card("InfoCard"))
+async def show_card(
+    title: str,
+    subtitle: str | None = None,
+    stats: list[CardStat] | None = None,
+    rows: list[CardRow] | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Draw a short summary card in the chat, for a few numbers or rows that read better as a
+    card than as prose. Skip it for long content, and when another tool already draws a card.
+    stats: up to 4 of {label, value, tone}, where value is a string. rows: up to 6 of
+    {label, value, tone}, where value is optional. tone: leave unset for healthy things,
+    "attention" means waiting on Pryce, "problem" means broken. Hosts that can't draw cards just
+    get the data back."""
+    return {
+        "title": title,
+        "subtitle": subtitle,
+        "stats": [s.model_dump() for s in stats or []],
+        "rows": [r.model_dump() for r in rows or []],
+        "note": note,
+    }
+
+
+@mcp.tool(meta=_card("CalendarWidget"))
+async def calendar_today() -> dict[str, Any]:
+    """Today's calendar events from Pryce's primary Google Calendar."""
+    today = await _call(calendar.get_today())
+    return today.model_dump()
 
 
 @mcp.tool()
@@ -283,7 +381,7 @@ async def second_opinion(subject: str, context: str = "") -> dict[str, Any]:
     return await _wait(job)
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("JobWidget"))
 async def delegate_code_task(
     repo: str, instruction: str, mode: Literal["review", "change"] = "review"
 ) -> dict[str, Any]:
@@ -321,7 +419,7 @@ async def resume_job(job_id: str) -> dict[str, Any]:
     return await _wait(job)
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("JobWidget"))
 async def job_status(job_id: str) -> dict[str, Any]:
     """A worker job's status, its last few steps, its question if it's waiting on one
     (needs_input), and its result, PR link and CI state once available."""
@@ -336,7 +434,7 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
     return _job_view(await _sazed("POST", f"/jobs/{job_id}/cancel"))
 
 
-@mcp.tool()
+@mcp.tool(meta=_card("JobsWidget"))
 async def list_jobs(limit: int = 10) -> dict[str, Any]:
     """Recent worker jobs (research, second opinions, code tasks) with status and a preview."""
     data = await _sazed("GET", f"/jobs?limit={max(1, min(limit, 50))}")
