@@ -138,7 +138,7 @@ app.include_router(
     search.router, prefix="/search", tags=["search"], dependencies=[Depends(verify_api_key)]
 )
 app.include_router(
-    webhooks.router, prefix="/webhooks", tags=["webhooks"], dependencies=[Depends(verify_api_key)]
+    webhooks.router, prefix="/webhooks", tags=["webhooks"]
 )
 app.include_router(
     github_app.router,
