@@ -138,8 +138,10 @@ app.include_router(
     search.router, prefix="/search", tags=["search"], dependencies=[Depends(verify_api_key)]
 )
 app.include_router(
-    webhooks.router, prefix="/webhooks", tags=["webhooks"]
+    webhooks.router, prefix="/webhooks", tags=["webhooks"], dependencies=[Depends(verify_api_key)]
 )
+# Authenticated by GitHub's HMAC signature instead of the API key (see webhooks.github_router).
+app.include_router(webhooks.github_router, prefix="/webhooks", tags=["webhooks"])
 app.include_router(
     github_app.router,
     prefix="/github/app",
