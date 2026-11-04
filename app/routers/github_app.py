@@ -147,6 +147,24 @@ async def add_issue_comment(owner: str, repo: str, number: int, req: CommentRequ
     return {"id": c["id"], "url": c["html_url"]}
 
 
+class PullReviewRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=65536)
+
+
+@router.post("/repos/{owner}/{repo}/pulls/{number}/reviews", status_code=201)
+async def create_pull_review(owner: str, repo: str, number: int, req: PullReviewRequest):
+    # Comment only: the bot never approves or requests changes, so it can't count toward a
+    # merge rule. Merging stays Pryce's call.
+    token, _ = await installation_token(f"{owner}/{repo}", {"pull_requests": "write"})
+    r = await _call(
+        "POST",
+        f"/repos/{owner}/{repo}/pulls/{number}/reviews",
+        token,
+        json={"body": req.body, "event": "COMMENT"},
+    )
+    return {"id": r["id"], "url": r["html_url"], "state": r.get("state")}
+
+
 # ---------------------------------------------------------------- worker support
 
 
