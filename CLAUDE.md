@@ -151,7 +151,7 @@ Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON respon
 
 **Stub / not yet implemented:**
 - `context.py` — `GET /context/now` returns placeholder; aggregated context snapshot not built yet
-- `webhooks.py` — `POST /webhooks/ingest` accepts payloads but source-specific handling not implemented
+- `webhooks.py` — `POST /webhooks/github` checks GitHub's HMAC signature (fails closed without `GITHUB_WEBHOOK_SECRET`) and forwards pull requests, issues, issue comments, reviews and review comments to Sazed's `POST /events/github` in one flat shape (`normalize_github`). Sazed decides what each starts. `POST /webhooks/ingest` is still a stub
 
 ## Key Conventions
 
