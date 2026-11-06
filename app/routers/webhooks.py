@@ -49,33 +49,55 @@ async def github_webhook(
     body_bytes = await request.body()
     _verify_github_signature(body_bytes, x_hub_signature_256)
 
-    if x_github_event != "pull_request":
+    if x_github_event not in FORWARDED_EVENTS:
         return {"status": "ignored", "reason": f"unhandled event {x_github_event}"}
 
     sazed_url = settings.sazed_url.rstrip("/")
     if not sazed_url:
         raise HTTPException(503, "sazed_url is not configured")
 
-    payload = await request.json()
-    pr = payload.get("pull_request") or {}
-    event = {
-        "repo": (payload.get("repository") or {}).get("full_name"),
-        "pr_number": pr.get("number"),
-        "action": payload.get("action") or "",
-        "draft": bool(pr.get("draft")),
-        "sender": (payload.get("sender") or {}).get("login", ""),
-        "title": (pr.get("title") or "")[:500],
-        "body": (pr.get("body") or "")[:8000],
-        "branch": (pr.get("head") or {}).get("ref"),
-    }
+    event = normalize_github(x_github_event, await request.json())
     headers = {"X-API-Key": settings.sazed_api_key} if settings.sazed_api_key else {}
     resp = await get_client().post(
-        f"{sazed_url}/events/github/pull-request", headers=headers, json=event, timeout=30.0
+        f"{sazed_url}/events/github", headers=headers, json=event, timeout=30.0
     )
     if not resp.is_success:
-        logger.error("Sazed refused a pull_request event: %d %s", resp.status_code, resp.text)
+        logger.error("Sazed refused a %s event: %d %s", x_github_event, resp.status_code, resp.text)
         raise HTTPException(502, "Sazed couldn't take the event")
     return resp.json()
+
+
+FORWARDED_EVENTS = (
+    "pull_request",
+    "issues",
+    "issue_comment",
+    "pull_request_review",
+    "pull_request_review_comment",
+)
+
+
+def normalize_github(event: str, payload: dict) -> dict:
+    """One flat shape for Sazed's intake (POST /events/github), whatever the GitHub event."""
+    pr = payload.get("pull_request") or {}
+    issue = payload.get("issue") or {}
+    thread = pr or issue
+    detail = payload.get("comment") or payload.get("review") or {}
+    opened = event in ("pull_request", "issues")
+    return {
+        "event": event,
+        "action": payload.get("action") or "",
+        "repo": (payload.get("repository") or {}).get("full_name"),
+        "number": thread.get("number"),
+        "is_pr": bool(pr) or "pull_request" in issue,
+        "sender": (payload.get("sender") or {}).get("login", ""),
+        "title": (thread.get("title") or "")[:500],
+        "body": ((thread if opened else detail).get("body") or "")[:8000],
+        "branch": (pr.get("head") or {}).get("ref"),
+        "draft": bool(pr.get("draft")),
+        "url": ((thread if opened else detail).get("html_url") or "")[:500],
+        "path": detail.get("path"),
+        "line": detail.get("line") or detail.get("original_line"),
+    }
 
 
 @router.post("/ingest")
