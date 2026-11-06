@@ -450,6 +450,15 @@ async def bakeoff_status(bakeoff_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def learning_summary() -> dict[str, Any]:
+    """What has gone wrong in Sazed's worker jobs, by failure class (My-AI plans/14, learning
+    v1): counts per class over all time and the last 30 days, split into operational stops
+    (timeouts, caps, quota, cancelled) and lessons; jobs no rule could classify; and the open
+    guard items (backlog type guard) a repeated lesson proposed."""
+    return await _sazed("GET", "/learning")
+
+
+@mcp.tool()
 async def promote_bakeoff(bakeoff_id: str, arm: str) -> dict[str, Any]:
     """Open one pull request from the chosen arm of a bake-off (arm: its name from
     bakeoff_status, e.g. "opus"). Only one arm per bake-off can be promoted. Pryce picks the
