@@ -427,6 +427,37 @@ async def job_status(job_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def start_bakeoff(repo: str, instruction: str, models: list[str]) -> dict[str, Any]:
+    """Run one change task on 2 or 3 Claude models side by side to compare them (a bake-off).
+    models: Claude model ids, e.g. ["claude-sonnet-5-5", "claude-opus-5-5"]; the same model
+    twice measures run-to-run variation. The arms open no pull request and queue behind all
+    other work, under their own daily cap. Returns the bakeoff_id: read the comparison with
+    bakeoff_status, then promote_bakeoff the arm Pryce picks to open one PR from it."""
+    return await _sazed(
+        "POST",
+        "/bakeoffs",
+        {"repo": repo, "instruction": instruction, "models": models, "requested_by": "mcp"},
+    )
+
+
+@mcp.tool()
+async def bakeoff_status(bakeoff_id: str) -> dict[str, Any]:
+    """A bake-off's side-by-side comparison, one entry per arm: state, whether the checks
+    passed, tests still failing, seconds, turns, tool calls, output tokens, the API-equivalent
+    cost, files changed, the agent's summary, and the PR once promoted. done is true when
+    every arm has settled."""
+    return await _sazed("GET", f"/bakeoffs/{bakeoff_id}")
+
+
+@mcp.tool()
+async def promote_bakeoff(bakeoff_id: str, arm: str) -> dict[str, Any]:
+    """Open one pull request from the chosen arm of a bake-off (arm: its name from
+    bakeoff_status, e.g. "opus"). Only one arm per bake-off can be promoted. Pryce picks the
+    arm; don't promote one on your own judgment."""
+    return await _sazed("POST", f"/bakeoffs/{bakeoff_id}/promote", {"arm": arm})
+
+
+@mcp.tool()
 async def cancel_job(job_id: str) -> dict[str, Any]:
     """Stop a worker job (queued, running, waiting for approval, or waiting on a question).
     Its agent session is kept, so continue_job can redirect it with new directions a few
