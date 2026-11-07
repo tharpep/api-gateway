@@ -9,6 +9,7 @@ gateway key; direct LAN callers must send the key themselves.
 import asyncio
 import functools
 import time
+from datetime import date
 from typing import Any, Literal
 
 import httpx
@@ -23,7 +24,9 @@ from app import activity
 from app.config import settings
 from app.dependencies import verify_api_key
 from app.http_client import get_client
-from app.routers import calendar, homelab, notify, services
+from app.routers import calendar, homelab, journal, kb, notify, services, tasks
+from app.routers.multi_search import models as search_models
+from app.routers.multi_search import router as search_router
 
 mcp = FastMCP(
     "sazed-gateway",
@@ -36,7 +39,10 @@ mcp = FastMCP(
         "on Gemini (Antigravity) with Google search; code tasks run on Claude Code and wait for "
         "Pryce's approval in the Sazed console before they start. Long jobs return a job_id; "
         "check it with job_status. send_to_phone puts a link, a short note or a long document "
-        "in front of Pryce on his phone (Pushover)."
+        "in front of Pryce on his phone (Pushover). "
+        "journal_* log and read Pryce's contributions journal (career or personal). kb_* search "
+        "and add to his knowledge base. tasks_* read and add Google Tasks. multi_search looks up "
+        "recent news and Hacker News posts."
     ),
     stateless_http=True,
     json_response=True,
@@ -269,6 +275,194 @@ async def send_to_phone(
             title, message, _PHONE_PRIORITY[priority], url, url_title, document
         )
     )
+
+
+# ---------------------------------------------------------------- journal
+
+_JOURNAL_BODY_CHARS = 1500
+
+
+@mcp.tool()
+async def journal_add(
+    title: str,
+    body: str,
+    subcategory: str,
+    category: Literal["career", "personal"] = "career",
+    tags: list[str] | None = None,
+    entry_date: str | None = None,
+) -> dict:
+    """Log an entry in Pryce's contributions journal. subcategory is free-form within the
+    category (e.g. an employer or project slug; check existing ones with journal_summary).
+    entry_date is YYYY-MM-DD and defaults to today."""
+    try:
+        parsed = date.fromisoformat(entry_date) if entry_date else None
+    except ValueError as e:
+        raise ToolError(f"entry_date must be YYYY-MM-DD: {e}") from e
+    return await _call(
+        journal.create_entry(
+            journal.EntryIn(
+                category=category,
+                subcategory=subcategory,
+                title=title,
+                body=body,
+                entry_date=parsed,
+                tags=tags or [],
+            )
+        )
+    )
+
+
+@mcp.tool()
+async def journal_summary(
+    period: Literal["week", "month", "last_week", "last_month"] = "week",
+    category: Literal["career", "personal"] | None = None,
+    subcategory: str | None = None,
+) -> dict:
+    """Journal entries for a period, grouped by day, with the subcategories and top tags seen.
+    Long entry bodies are cut at 1500 characters."""
+    result = await _call(
+        journal.journal_summary(
+            category=category,
+            subcategory=subcategory,
+            project=None,
+            period=period,
+            start_date=None,
+            end_date=None,
+        )
+    )
+    for day in result["days"]:
+        for entry in day["entries"]:
+            entry["body"] = entry["body"][:_JOURNAL_BODY_CHARS]
+    return result
+
+
+# ---------------------------------------------------------------- knowledge base
+
+_KB_CHUNK_CHARS = 1500
+
+
+async def _kb(path: str, body: dict) -> Any:
+    try:
+        resp = await get_client().post(
+            kb._kb_url(path), json=body, headers=kb._kb_headers(), timeout=kb._TIMEOUT
+        )
+    except HTTPException as e:
+        raise ToolError(str(e.detail)) from e
+    except httpx.HTTPError as e:
+        raise ToolError(f"Knowledge base unreachable: {e}") from e
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except ValueError:
+            detail = resp.text
+        raise ToolError(str(detail))
+    return resp.json()
+
+
+@mcp.tool()
+async def kb_search(query: str, top_k: int = 5, categories: list[str] | None = None) -> dict:
+    """Search Pryce's knowledge base (hybrid retrieval with rerank). Returns the best chunks
+    with their source filename and file id; each chunk is cut at 1500 characters."""
+    data = await _kb(
+        "/kb/search",
+        {"query": query, "top_k": max(1, min(top_k, 20)), "categories": categories},
+    )
+    return {
+        "count": data["count"],
+        "results": [
+            {
+                "filename": r["filename"],
+                "file_id": r["drive_file_id"],
+                "category": r["source_category"],
+                "score": round(r["rerank_score"], 3),
+                "content": r["content"][:_KB_CHUNK_CHARS],
+            }
+            for r in data["results"]
+        ],
+    }
+
+
+@mcp.tool()
+async def kb_ingest_url(url: str, category: str | None = None) -> dict:
+    """Fetch a web page and add it to Pryce's knowledge base. Only when he asks to save it."""
+    data = await _kb("/kb/ingest/url", {"url": url, "category": category})
+    return {k: data[k] for k in ("file_id", "filename", "category", "chunk_count", "summary")}
+
+
+# ---------------------------------------------------------------- tasks
+
+
+async def _task_list_id(name: str | None) -> str:
+    """A list's id from its title or id; None is the default list."""
+    if not name:
+        return "@default"
+    lists = (await _call(tasks.get_task_lists()))["lists"]
+    for item in lists:
+        if name in (item.id, item.title) or name.lower() == item.title.lower():
+            return item.id
+    raise ToolError(f"No task list named {name!r}. Lists: {', '.join(i.title for i in lists)}")
+
+
+@mcp.tool()
+async def tasks_list(list: str | None = None, include_completed: bool = False) -> dict:
+    """Google Tasks in one list, by title or id (default list when omitted). Open tasks only
+    unless include_completed. An unknown list name returns the available list titles."""
+    list_id = await _task_list_id(list)
+    data = await _call(tasks.get_tasks(list_id, include_completed=include_completed))
+    return {"count": data["count"], "tasks": [t.model_dump() for t in data["tasks"]]}
+
+
+@mcp.tool()
+async def tasks_add(
+    title: str, list: str | None = None, notes: str | None = None, due: str | None = None
+) -> dict:
+    """Add a Google Task. list is a list title or id (default list when omitted). due is
+    YYYY-MM-DD."""
+    if due and len(due) == 10:
+        due = f"{due}T00:00:00.000Z"
+    list_id = await _task_list_id(list)
+    task = await _call(
+        tasks.create_task(list_id, tasks.CreateTaskRequest(title=title, notes=notes, due=due))
+    )
+    return task.model_dump()
+
+
+# ---------------------------------------------------------------- multi search
+
+_SEARCH_SNIPPET_CHARS = 300
+
+
+@mcp.tool()
+async def multi_search(
+    query: str,
+    max_results: int = 10,
+    since: str | None = None,
+    sort: Literal["relevance", "date"] = "relevance",
+) -> dict:
+    """Recent news and Hacker News posts on a topic, merged, with how many sources corroborate
+    each story. since is an ISO 8601 date. For anything beyond recent news, use WebSearch."""
+    data = await _call(
+        search_router.aggregate_search(
+            search_models.AggregateSearchRequest(
+                query=query, max_results=max(1, min(max_results, 25)), since=since, sort=sort
+            )
+        )
+    )
+    return {
+        "sources_queried": data.sources_queried,
+        "results": [
+            {
+                "title": r.title,
+                "url": r.url,
+                "platform": r.source_platform,
+                "published": r.timestamp,
+                "snippet": r.content_snippet[:_SEARCH_SNIPPET_CHARS],
+                "corroboration": r.corroboration_count,
+            }
+            for r in data.results
+        ],
+        "clusters": [c.model_dump() for c in data.corroboration_clusters[:5]],
+    }
 
 
 # ---------------------------------------------------------------- Sazed worker jobs
