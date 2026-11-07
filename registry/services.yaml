@@ -249,3 +249,14 @@ services:
     open_url: https://media.tail77c590.ts.net:4567
     icon: suwayomi
     health: {type: http, url: http://192.168.50.117:4567/}
+
+  - id: carousel-studio
+    name: Carousel Studio
+    group: apps
+    container: 112
+    lifecycle: active
+    description: Seamless Instagram carousel editor (static build behind Caddy)
+    open_url: https://carousel-studio.tail77c590.ts.net
+    icon: instagram
+    health: {type: http, url: http://192.168.50.29/}
+    repo: tharpep/carousel-studio
