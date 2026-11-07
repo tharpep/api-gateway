@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     # Sazed (CT 106), for the MCP job tools (research, second opinions, code tasks).
     sazed_url: str = ""
     sazed_api_key: str = ""
+    vault_url: str = ""
+    vault_api_key: str = ""
     # GitHub App "sazed-worker-tharpep" (plans/07): bot identity for Sazed's issues and the
     # worker's PRs. The private key is the .pem, base64-encoded onto one line.
     github_app_id: str = ""

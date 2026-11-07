@@ -716,6 +716,123 @@ async def plan_diff(slug: str, a: int, b: int) -> dict[str, Any]:
     return await _sazed("GET", f"/board/plans/{slug}/diff?a={a}&b={b}")
 
 
+async def _vault(verb: str, **args: Any) -> Any:
+    if not settings.vault_url:
+        raise ToolError("The vault isn't configured on the gateway (VAULT_URL)")
+    try:
+        resp = await get_client().post(
+            f"{settings.vault_url.rstrip('/')}/v1/{verb}",
+            json={k: v for k, v in args.items() if v is not None},
+            headers={"X-Vault-Key": settings.vault_api_key},
+            timeout=20.0,
+        )
+    except httpx.HTTPError as e:
+        raise ToolError(f"Vault unreachable: {e}") from e
+    try:
+        payload = resp.json()
+    except ValueError:
+        payload = {"error": resp.text}
+    if resp.status_code >= 400:
+        raise ToolError(payload.get("refused") or payload.get("error") or resp.text)
+    return payload["result"]
+
+
+@mcp.tool()
+async def vault_search(query: str, folder: str | None = None, limit: int = 20) -> str:
+    """Search Pryce's Obsidian vault (hosted on the homelab, synced to all his machines) for
+    notes containing the text, case-insensitive. Returns JSON hits: path, line, the matching
+    line. The vault has three top folders: inbox/ (raw captures), notes/ (Pryce's own notes)
+    and claude/ (the agents' layer, one folder per project). Read-only."""
+    return await _vault("search", query=query, folder=folder, limit=limit)
+
+
+@mcp.tool()
+async def vault_read(path: str) -> str:
+    """Read one vault note by its path from the vault root, e.g. claude/sazed/sazed-ideas.md
+    (the .md is optional). Read-only."""
+    return await _vault("read", path=path)
+
+
+@mcp.tool()
+async def vault_list(folder: str | None = None) -> str:
+    """List the vault's notes, one path per line, optionally under a folder. Read-only."""
+    return await _vault("list", folder=folder)
+
+
+@mcp.tool()
+async def vault_backlinks(path: str) -> str:
+    """Notes that link to this note with [[wikilinks]], resolved by basename the way Obsidian
+    does. Read-only."""
+    return await _vault("backlinks", path=path)
+
+
+@mcp.tool()
+async def vault_unresolved() -> str:
+    """Wikilinks that point at no note, with the notes that hold them. Read-only."""
+    return await _vault("unresolved")
+
+
+@mcp.tool()
+async def vault_orphans() -> str:
+    """Notes nothing links to. Read-only."""
+    return await _vault("orphans")
+
+
+@mcp.tool()
+async def vault_tags() -> str:
+    """Every tag in the vault with its count: inline #tags plus frontmatter tags and topic
+    lists. Read-only."""
+    return await _vault("tags")
+
+
+@mcp.tool()
+async def vault_create(path: str, content: str = "") -> str:
+    """Create a note. Agents write only under claude/, one folder per project
+    (claude/<project>/...); notes/ and inbox/ are Pryce's. If the path is taken, a " 1" suffix
+    is added; the path written is returned. Every write is a git commit on the vault."""
+    return await _vault("create", path=path, content=content)
+
+
+@mcp.tool()
+async def vault_append(path: str, content: str) -> str:
+    """Append to a note under claude/, creating it if missing. Use it for logs and idea
+    lists."""
+    return await _vault("append", path=path, content=content)
+
+
+@mcp.tool()
+async def vault_edit(path: str, old_str: str, new_str: str) -> str:
+    """Replace text in a note under claude/. old_str must occur exactly once (frontmatter
+    counts), or nothing is written. Read the note first."""
+    return await _vault("edit", path=path, old_str=old_str, new_str=new_str)
+
+
+@mcp.tool()
+async def vault_delete(path: str) -> str:
+    """Delete a note under claude/. Recoverable from the vault's git history."""
+    return await _vault("delete", path=path)
+
+
+@mcp.tool()
+async def vault_set_property(
+    path: str,
+    name: str,
+    value: str,
+    type: Literal["text", "list", "checkbox"] = "text",
+) -> str:
+    """Set a frontmatter property on a note under notes/ or claude/ (tagging Pryce's notes is
+    allowed; editing their text is not). A list value is comma-separated."""
+    return await _vault("set_property", path=path, name=name, value=value, type=type)
+
+
+@mcp.tool()
+async def vault_file_note(path: str, destination: str) -> str:
+    """Move a note: inbox/ to notes/ or claude/, notes/ within notes/, claude/ within claude/.
+    The destination is a folder (ending in /) or a full path; an existing note there is never
+    overwritten. Returns the new path."""
+    return await _vault("file_note", path=path, destination=destination)
+
+
 class _RequireApiKey:
     """ASGI guard: FastAPI route dependencies don't apply to mounted apps, so check the key
     here with the same verify_api_key the REST routers use."""
