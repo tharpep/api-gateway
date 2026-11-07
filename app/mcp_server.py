@@ -910,6 +910,54 @@ async def plan_diff(slug: str, a: int, b: int) -> dict[str, Any]:
     return await _sazed("GET", f"/board/plans/{slug}/diff?a={a}&b={b}")
 
 
+@mcp.tool()
+async def profile_list() -> list[dict[str, Any]]:
+    """Dispatch agent profiles from Sazed's registry: model, effort, budget, timeout, whether the
+    task may write, and whether it must read evidence. Dispatch reads these when a plan runs; the
+    rule is the cheapest model whose check catches its mistakes. Read-only."""
+    return await _sazed("GET", "/agents/profiles")
+
+
+@mcp.tool()
+async def profile_read(name: str) -> dict[str, Any]:
+    """One agent profile with its version history (who changed it, why, and the values)."""
+    return await _sazed("GET", f"/agents/profiles/{name}")
+
+
+@mcp.tool()
+async def profile_save(
+    name: str,
+    model: str,
+    effort: Literal["low", "medium", "high", "xhigh", "max"],
+    budget_usd: float,
+    timeout_s: int,
+    read_only: bool,
+    reason: str,
+    evidence_required: bool = False,
+    description: str = "",
+    expected_version: int | None = None,
+    agent: str = "claude",
+) -> dict[str, Any]:
+    """Create or change an agent profile. model is an alias (haiku, sonnet, opus) or a full
+    claude- id. Give a one-line reason (what changed and why) and, when editing, the version you
+    read, so a newer change isn't overwritten. Every save is kept in the profile's history."""
+    body = {
+        "model": model,
+        "effort": effort,
+        "budget_usd": budget_usd,
+        "timeout_s": timeout_s,
+        "read_only": read_only,
+        "evidence_required": evidence_required,
+        "description": description,
+        "author": f"agent:{agent}",
+        "reason": reason,
+        "expected_version": expected_version,
+    }
+    return await _sazed(
+        "PUT", f"/agents/profiles/{name}", {k: v for k, v in body.items() if v is not None}
+    )
+
+
 async def _vault(verb: str, **args: Any) -> Any:
     if not settings.vault_url:
         raise ToolError("The vault isn't configured on the gateway (VAULT_URL)")
