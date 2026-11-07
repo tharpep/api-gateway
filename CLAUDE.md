@@ -133,6 +133,7 @@ The bot is `sazed-worker-tharpep[bot]`, set by `GITHUB_APP_ID` and `GITHUB_APP_K
   - `POST /clone-token` returns a read-only token for the worker to clone a private repo.
   - `POST /pull-request` takes `{repo, branch: sazed/..., title, body, commit_message, files: {path: base64 | null}}`. It builds blobs, tree, commit, ref and PR through the Git Data API (no git push), keeps existing file modes, and refuses `.git/` and `.github/workflows/` paths.
 - **Why a bot:** it has no admin bypass and can't approve its own PRs, so merges stay with Pryce.
+- **Merging:** `PUT /github/repos/{owner}/{repo}/pulls/{n}/merge` squash-merges on Pryce's token and deletes the branch. The console's Merge button reaches it through Sazed. GitHub's refusals (a failing check, a required review, a conflict) come back as a 409 with GitHub's reason.
 - **Your token stays for your own operations:** Sazed's `create_issue` and comment tools use these bot routes; the PAT routes under `/github` are still Pryce's own identity.
 
 ### Activity feed (`app/activity.py`)
