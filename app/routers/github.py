@@ -330,6 +330,30 @@ async def add_pr_comment(owner: str, repo: str, number: int, req: CommentRequest
     return {"id": c["id"], "url": c["html_url"]}
 
 
+@router.put("/repos/{owner}/{repo}/pulls/{number}/merge")
+async def merge_pr(owner: str, repo: str, number: int):
+    """Squash-merge a pull request as Pryce and delete its branch. GitHub's refusal (a failing
+    check, a required review, a conflict) comes back as a 409 with GitHub's reason."""
+    pr = (await _gh("GET", f"/repos/{owner}/{repo}/pulls/{number}")).json()
+    resp = await get_client().put(
+        f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{number}/merge",
+        headers=_headers(),
+        json={"merge_method": "squash", "sha": pr["head"]["sha"]},
+        timeout=30.0,
+    )
+    if resp.status_code in (403, 405, 409, 422):
+        raise HTTPException(409, resp.json().get("message", resp.text))
+    if not resp.is_success:
+        raise HTTPException(502, f"GitHub API error {resp.status_code}: {resp.text}")
+    if pr["head"]["repo"] and pr["head"]["repo"]["full_name"] == pr["base"]["repo"]["full_name"]:
+        await get_client().delete(
+            f"{GITHUB_API}/repos/{owner}/{repo}/git/refs/heads/{pr['head']['ref']}",
+            headers=_headers(),
+            timeout=30.0,
+        )
+    return {"merged": True, "sha": resp.json().get("sha"), "url": pr["html_url"]}
+
+
 class CreatePRRequest(BaseModel):
     title: str
     head: str           # source branch
