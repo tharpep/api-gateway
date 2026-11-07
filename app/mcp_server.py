@@ -548,11 +548,14 @@ async def board_file_card(
     summary: str = "",
     why: str = "",
     repos: list[str] | None = None,
+    plan: str | None = None,
+    plan_section: str | None = None,
 ) -> dict[str, Any]:
     """Add a card (a backlog item) under a workstream, so it shows on its project's ladder.
     Use for real work that belongs to a project; ideas with no project go in the backlog
-    without a workstream. Fails if a similar card already exists: move that one instead
-    with board_move_card."""
+    without a workstream. When the work comes from a plan, pass the plan's slug and the
+    section id it implements (from plan_read), so the card shows under that section.
+    Fails if a similar card already exists: move that one instead with board_move_card."""
     body = {
         "type": type,
         "title": title,
@@ -561,6 +564,8 @@ async def board_file_card(
         "repos": repos or [],
         "workstream_id": workstream_id,
     }
+    if plan:
+        body |= {"plan": plan, "plan_section": plan_section}
     return await _sazed("POST", "/backlog", body)
 
 
@@ -652,6 +657,63 @@ async def board_update_workstream(
         f"/board/workstreams/{workstream_id}",
         {k: v for k, v in body.items() if v is not None},
     )
+
+
+@mcp.tool()
+async def plan_list(
+    project: str | None = None,
+    state: Literal["draft", "active", "done", "superseded"] | None = None,
+) -> dict[str, Any]:
+    """Pryce's plans on the board: each with its project, state, version, who last changed it
+    and why, card progress, and a stale flag. Read-only."""
+    query = "&".join(f"{k}={v}" for k, v in (("project", project), ("state", state)) if v)
+    return await _sazed("GET", f"/board/plans{'?' + query if query else ''}")
+
+
+@mcp.tool()
+async def plan_read(slug: str, version: int | None = None) -> dict[str, Any]:
+    """One plan: its markdown body at a version (default the newest), its sections with stable
+    ids and the cards filed from each. The board's plan is the one to follow: it beats any copy
+    in a repo or a prompt. Read it before changing it, and pass its version to plan_save."""
+    return await _sazed("GET", f"/board/plans/{slug}{f'?version={version}' if version else ''}")
+
+
+@mcp.tool()
+async def plan_save(
+    slug: str, body: str, reason: str, expected_version: int, agent: str = "claude"
+) -> dict[str, Any]:
+    """Save a new version of a plan: the full markdown body, a one-line reason (what changed
+    and why), and the version you read, so a newer save isn't overwritten. Edit the parts that
+    changed and keep the rest; a save that replaces more than half the plan is refused unless
+    the reason starts with "rewrite:". Keep `{#id}` after headings so cards stay linked."""
+    return await _sazed(
+        "POST",
+        f"/board/plans/{slug}/versions",
+        {"body": body, "reason": reason, "expected_version": expected_version,
+         "author": f"agent:{agent}"},
+    )
+
+
+@mcp.tool()
+async def plan_create(
+    slug: str, title: str, body: str, reason: str, project: str | None = None,
+    agent: str = "claude",
+) -> dict[str, Any]:
+    """Start a plan on the board: a short kebab-case slug, a title, the markdown body (give
+    sections a stable id with `{#id}` after the heading) and the project slug it belongs to.
+    It starts as a draft; Pryce makes it active."""
+    body_json = {"slug": slug, "title": title, "body": body, "reason": reason,
+                 "author": f"agent:{agent}"}
+    if project:
+        body_json["project"] = project
+    return await _sazed("POST", "/board/plans", body_json)
+
+
+@mcp.tool()
+async def plan_diff(slug: str, a: int, b: int) -> dict[str, Any]:
+    """What changed in a plan between versions a and b: blocks added, removed or changed, with
+    word-level edits inside changed blocks, and both versions' authors and reasons."""
+    return await _sazed("GET", f"/board/plans/{slug}/diff?a={a}&b={b}")
 
 
 class _RequireApiKey:
