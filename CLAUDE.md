@@ -151,7 +151,7 @@ Streamable-HTTP MCP server (official `mcp` SDK, FastMCP, stateless + JSON respon
 
 **Stub / not yet implemented:**
 - `context.py` — `GET /context/now` returns placeholder; aggregated context snapshot not built yet
-- `webhooks.py` — `POST /webhooks/github` checks GitHub's HMAC signature (fails closed without `GITHUB_WEBHOOK_SECRET`) and forwards pull requests, issues, issue comments, reviews and review comments to Sazed's `POST /events/github` in one flat shape (`normalize_github`). Sazed decides what each starts. `POST /webhooks/ingest` is still a stub
+- `webhooks.py` — `POST /webhooks/github` checks GitHub's HMAC signature (fails closed without `GITHUB_WEBHOOK_SECRET`) and forwards pull requests, issues, issue comments, reviews and review comments to Sazed's `POST /events/github` in one flat shape (`normalize_github`). Sazed decides what each starts. GitHub reaches it through the `sazed-worker-tharpep` App's webhook at `https://sazed.tail77c590.ts.net:8443/webhooks/github`: a Tailscale Funnel on CT 106 that serves only that path and proxies straight to this service on CT 104, skipping Caddy so public traffic never gets the gateway key. The secret is set on the App through its JWT (`PATCH /app/hook/config`) from this host, so it only lives in the env file. `POST /webhooks/ingest` is still a stub
 
 ## Key Conventions
 
