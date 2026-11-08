@@ -936,11 +936,20 @@ async def profile_save(
     evidence_required: bool = False,
     description: str = "",
     expected_version: int | None = None,
+    mcp: dict[str, list[str]] | None = None,
     agent: str = "claude",
 ) -> dict[str, Any]:
     """Create or change an agent profile. model is an alias (haiku, sonnet, opus) or a full
     claude- id. Give a one-line reason (what changed and why) and, when editing, the version you
-    read, so a newer change isn't overwritten. Every save is kept in the profile's history."""
+    read, so a newer change isn't overwritten. Every save is kept in the profile's history.
+    mcp grants MCP servers from the registry (mcp_server_list) as {server: [tool, ...]}, or
+    {server: ["*"]} for every tool; agents get no MCP servers unless granted. Leave mcp out to
+    keep the profile's current grants."""
+    if mcp is None:
+        try:
+            mcp = (await _sazed("GET", f"/agents/profiles/{name}")).get("mcp")
+        except ToolError:
+            mcp = None
     body = {
         "model": model,
         "effort": effort,
@@ -952,9 +961,52 @@ async def profile_save(
         "author": f"agent:{agent}",
         "reason": reason,
         "expected_version": expected_version,
+        "mcp": mcp,
     }
     return await _sazed(
         "PUT", f"/agents/profiles/{name}", {k: v for k, v in body.items() if v is not None}
+    )
+
+
+@mcp.tool()
+async def mcp_server_list() -> list[dict[str, Any]]:
+    """MCP servers registered for dispatch agents: transport, url or command, header names (values
+    are ${VAR} references resolved on the machine running dispatch), and whether agents may be
+    granted it. Profiles grant servers by name. Read-only."""
+    return await _sazed("GET", "/agents/mcp-servers")
+
+
+@mcp.tool()
+async def mcp_server_save(
+    name: str,
+    transport: Literal["http", "stdio"],
+    reason: str,
+    url: str | None = None,
+    command: str | None = None,
+    args: list[str] | None = None,
+    headers: dict[str, str] | None = None,
+    agent_safe: bool = False,
+    description: str = "",
+    expected_version: int | None = None,
+    agent: str = "claude",
+) -> dict[str, Any]:
+    """Register or change an MCP server dispatch agents can be granted. http needs url; stdio needs
+    command (and args). Header values must be ${VAR} references, never literal secrets. Set
+    agent_safe only for servers fit for unattended agents. Give a reason and the version read."""
+    body = {
+        "transport": transport,
+        "url": url,
+        "command": command,
+        "args": args,
+        "headers": headers,
+        "agent_safe": agent_safe,
+        "description": description,
+        "author": f"agent:{agent}",
+        "reason": reason,
+        "expected_version": expected_version,
+    }
+    return await _sazed(
+        "PUT", f"/agents/mcp-servers/{name}", {k: v for k, v in body.items() if v is not None}
     )
 
 
