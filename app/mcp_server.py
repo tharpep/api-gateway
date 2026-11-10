@@ -692,9 +692,23 @@ async def list_jobs(limit: int = 10) -> dict[str, Any]:
 @mcp.tool()
 async def board_list(
     stage: Literal["inbox", "next", "doing", "needs_me", "done"] | None = None,
+    view: Literal["board", "done", "dismissed", "parked"] = "board",
 ) -> dict[str, Any]:
     """Pryce's board: every card of work with its stage and what happens next. needs_me is what's
-    waiting on him; doing is in progress. Filter by stage, since inbox can be long. Read-only."""
+    waiting on him; doing is in progress. Filter by stage, since inbox can be long. view done,
+    dismissed or parked lists closed or parked backlog cards instead (stage is ignored).
+    Read-only."""
+    if view != "board":
+        data = await _sazed("GET", f"/backlog?view={view}&limit=500")
+        return {
+            "cards": [
+                {
+                    "id": f"item:{item['id']}",
+                    **{key: item.get(key) for key in ("title", "status", "note", "workstream_id")},
+                }
+                for item in data["items"]
+            ]
+        }
     data = await _sazed("GET", "/board")
     cards = [c for c in data["cards"] if stage is None or c["stage"] == stage]
     return {
@@ -768,10 +782,43 @@ async def board_move_card(card_id: str, workstream_id: str | None) -> dict[str, 
     """Put an existing card (id like item:<uuid> from board_list or board_project) under a
     workstream, or take it off its workstream with workstream_id null. Job-only cards can't
     be filed."""
+    return await _sazed("PATCH", f"/backlog/{_item_id(card_id)}", {"workstream_id": workstream_id})
+
+
+@mcp.tool()
+async def board_update_card(
+    card_id: str,
+    status: Literal["new", "shortlisted", "done", "dismissed", "parked"] | None = None,
+    rank: int | None = None,
+    note: str | None = None,
+    title: str | None = None,
+    summary: str | None = None,
+    why: str | None = None,
+) -> dict[str, Any]:
+    """Change a backlog card (item:<uuid>): close it as done once its work shipped, dismiss a
+    duplicate or dead card (note names the original or the reason), park an idea for later
+    (off the board, never stale), or reopen it as new. rank sets an open card's priority
+    (1 = top, others shift). note records why; title, summary and why rewrite the card's text."""
+    body = {
+        "status": status,
+        "rank": rank,
+        "note": note,
+        "title": title,
+        "summary": summary,
+        "why": why,
+    }
+    return await _sazed(
+        "PATCH",
+        f"/backlog/{_item_id(card_id)}",
+        {k: v for k, v in body.items() if v is not None},
+    )
+
+
+def _item_id(card_id: str) -> str:
     kind, _, item_id = card_id.rpartition(":")
     if kind not in ("", "item"):
-        raise ToolError("Only backlog cards (item:<uuid>) can be filed under a workstream")
-    return await _sazed("PATCH", f"/backlog/{item_id}", {"workstream_id": workstream_id})
+        raise ToolError("Only backlog cards (item:<uuid>) can be changed; job cards can't")
+    return item_id
 
 
 @mcp.tool()
