@@ -919,12 +919,22 @@ async def board_update_card(
     why: str | None = None,
     plan: str | None = None,
     plan_section: str | None = None,
+    session: str | None = None,
+    branch: str | None = None,
+    pr: str | None = None,
+    unlink_session: bool = False,
 ) -> dict[str, Any]:
     """Change a backlog card (item:<uuid>): close it as done once its work shipped, dismiss a
     duplicate or dead card (note names the original or the reason), park an idea for later
     (off the board, never stale), or reopen it as new. rank sets an open card's priority
     (1 = top, others shift). note records why; title, summary and why rewrite the card's text.
-    plan links the card to a plan by slug, and plan_section to a section id from plan_read."""
+    plan links the card to a plan by slug, and plan_section to a section id from plan_read.
+    To mark a card started from a terminal session, set session (a free-text label), branch
+    and pr (a GitHub PR URL or owner/repo#number): the card moves to doing, and merging that
+    PR closes it. unlink_session removes the link; it can't be combined with the three."""
+    link = {k: v for k, v in {"session": session, "branch": branch, "pr": pr}.items() if v}
+    if unlink_session and link:
+        raise ToolError("unlink_session can't be combined with session, branch or pr")
     body = {
         "status": status,
         "rank": rank,
@@ -936,6 +946,8 @@ async def board_update_card(
         "plan_section": plan_section,
     }
     sent = {k: v for k, v in body.items() if v is not None}
+    if link or unlink_session:
+        sent["link"] = link or None
     result = await _sazed("PATCH", f"/backlog/{_item_id(card_id)}", sent)
     return _written(result, sent, "id", "title", "status")
 
