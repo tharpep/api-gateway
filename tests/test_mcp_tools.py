@@ -21,7 +21,7 @@ GROUPS = {
         promote_bakeoff board_file_card board_add_project board_add_workstream plan_save
         plan_create profile_save mcp_server_save vault_create vault_append vault_file_note""",
     WRITE_IDEMPOTENT: """homelab_start_container board_move_card board_update_card
-        vault_set_property""",
+        board_update_cards vault_set_property""",
     WRITE_OPEN: "send_to_phone research second_opinion kb_ingest_url",
     DESTRUCTIVE: "homelab_restart_container vault_edit",
     DESTRUCTIVE_IDEMPOTENT: """cancel_job vault_delete board_update_project
