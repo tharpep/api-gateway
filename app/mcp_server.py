@@ -767,12 +767,19 @@ async def board_file_card(
     repos: list[str] | None = None,
     plan: str | None = None,
     plan_section: str | None = None,
+    effort: Literal["S", "M", "L"] | None = None,
+    impact: Literal["low", "medium", "high"] | None = None,
+    allow_similar: bool = False,
+    similar_reason: str | None = None,
 ) -> dict[str, Any]:
     """Add a card (a backlog item) under a workstream, so it shows on its project's ladder.
     Use for real work that belongs to a project; ideas with no project go in the backlog
     without a workstream. When the work comes from a plan, pass the plan's slug and the
     section id it implements (from plan_read), so the card shows under that section.
-    Fails if a similar card already exists: move that one instead with board_move_card."""
+    Fails if a similar card already exists: move that one instead with board_move_card. Only
+    when the card is genuinely distinct, pass allow_similar true with similar_reason saying why."""
+    if allow_similar and not similar_reason:
+        raise ToolError("similar_reason is required when allow_similar is true")
     body = {
         "type": type,
         "title": title,
@@ -783,6 +790,12 @@ async def board_file_card(
     }
     if plan:
         body |= {"plan": plan, "plan_section": plan_section}
+    if effort:
+        body["effort"] = effort
+    if impact:
+        body["impact"] = impact
+    if allow_similar:
+        body |= {"allow_similar": True, "similar_reason": similar_reason}
     return await _sazed("POST", "/backlog", body)
 
 
@@ -803,11 +816,14 @@ async def board_update_card(
     title: str | None = None,
     summary: str | None = None,
     why: str | None = None,
+    plan: str | None = None,
+    plan_section: str | None = None,
 ) -> dict[str, Any]:
     """Change a backlog card (item:<uuid>): close it as done once its work shipped, dismiss a
     duplicate or dead card (note names the original or the reason), park an idea for later
     (off the board, never stale), or reopen it as new. rank sets an open card's priority
-    (1 = top, others shift). note records why; title, summary and why rewrite the card's text."""
+    (1 = top, others shift). note records why; title, summary and why rewrite the card's text.
+    plan links the card to a plan by slug, and plan_section to a section id from plan_read."""
     body = {
         "status": status,
         "rank": rank,
@@ -815,6 +831,8 @@ async def board_update_card(
         "title": title,
         "summary": summary,
         "why": why,
+        "plan": plan,
+        "plan_section": plan_section,
     }
     return await _sazed(
         "PATCH",
@@ -849,16 +867,21 @@ async def board_update_project(
     title: str | None = None,
     summary: str | None = None,
     rank: int | None = None,
+    plan: str | None = None,
+    repos: list[str] | None = None,
 ) -> dict[str, Any]:
     """Change a project. latest_update is the plain note on where it stands that the board shows
     under the title: two sentences at most, facts only (what shipped, what's next, what waits on
-    Pryce). Pausing, finishing or dropping a project is Pryce's call."""
+    Pryce). Pausing, finishing or dropping a project is Pryce's call.
+    plan is the project's plan slug; repos replaces the project's repo list."""
     body = {
         "latest_update": latest_update,
         "state": state,
         "title": title,
         "summary": summary,
         "rank": rank,
+        "plan": plan,
+        "repos": repos,
     }
     return await _sazed(
         "PATCH", f"/board/projects/{slug}", {k: v for k, v in body.items() if v is not None}
@@ -964,6 +987,23 @@ async def plan_diff(slug: str, a: int, b: int) -> dict[str, Any]:
     """What changed in a plan between versions a and b: blocks added, removed or changed, with
     word-level edits inside changed blocks, and both versions' authors and reasons."""
     return await _sazed("GET", f"/board/plans/{slug}/diff?a={a}&b={b}")
+
+
+@mcp.tool()
+async def plan_update(
+    slug: str,
+    state: Literal["draft", "active", "done", "superseded"] | None = None,
+    project: str | None = None,
+    workstream_id: str | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Change a plan's metadata, not its body (plan_save does that): title, the project slug it
+    belongs to, the step (workstream_id) it drives, or its state. Changing a plan's state or
+    project is Pryce's call: ask him first."""
+    body = {"state": state, "project": project, "workstream_id": workstream_id, "title": title}
+    return await _sazed(
+        "PATCH", f"/board/plans/{slug}", {k: v for k, v in body.items() if v is not None}
+    )
 
 
 @mcp.tool()
