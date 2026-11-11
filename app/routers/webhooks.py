@@ -94,6 +94,7 @@ def normalize_github(event: str, payload: dict) -> dict:
         "body": ((thread if opened else detail).get("body") or "")[:8000],
         "branch": (pr.get("head") or {}).get("ref"),
         "draft": bool(pr.get("draft")),
+        "merged": bool(pr.get("merged")),
         "url": ((thread if opened else detail).get("html_url") or "")[:500],
         "path": detail.get("path"),
         "line": detail.get("line") or detail.get("original_line"),
