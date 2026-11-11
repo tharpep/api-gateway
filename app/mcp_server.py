@@ -698,6 +698,40 @@ async def list_jobs(limit: int = 10) -> dict[str, Any]:
     }
 
 
+def _written(result: dict, sent: dict, *identity: str) -> dict[str, Any]:
+    """What a write tool returns: the record's identity plus the fields the call set."""
+    return {k: result[k] for k in dict.fromkeys((*identity, *sent)) if k in result}
+
+
+def _step_brief(step: dict, cards: bool) -> dict[str, Any]:
+    out = {k: step.get(k) for k in ("id", "title", "position", "status")}
+    out["progress"] = step.get("progress")
+    if cards:
+        out["cards"] = [
+            {k: card.get(k) for k in ("id", "title", "stage")} for card in step.get("cards", [])
+        ]
+    return out
+
+
+def _project_brief(project: dict, cards: bool) -> dict[str, Any]:
+    out = {
+        k: project.get(k) for k in ("slug", "title", "state", "rank", "headline", "latest_update")
+    }
+    out["steps"] = [_step_brief(step, cards) for step in project.get("workstreams", [])]
+    return out
+
+
+_STEP_IDENTITY = ("id", "title", "state", "position")
+
+
+def _step_written(result: dict, sent: dict, pick) -> dict[str, Any]:
+    """A step write may answer with the step or with its whole project; return the step."""
+    if "workstreams" not in result:
+        return _written(result, sent, *_STEP_IDENTITY)
+    step = next((s for s in result["workstreams"] if pick(s)), {})
+    return {"project": result.get("slug"), **_written(step, sent, *_STEP_IDENTITY)}
+
+
 @mcp.tool()
 async def board_list(
     stage: Literal["inbox", "next", "doing", "needs_me", "done"] | None = None,
@@ -741,20 +775,37 @@ async def board_card(card_id: str) -> dict[str, Any]:
 
 
 @mcp.tool(meta=_card("ProjectsWidget"))
-async def board_projects(include_closed: bool = False) -> dict[str, Any]:
+async def board_projects(
+    include_closed: bool = False, detail: Literal["summary", "full"] = "summary"
+) -> dict[str, Any]:
     """Pryce's projects, each an ordered ladder of workstreams with cards hanging off them.
     Progress, the current step, "next" and "blocked" are computed from the cards; only closing a
     workstream or pausing a project is stored. Use the workstream ids here to file cards.
-    Read-only."""
+    detail summary (default) gives each project's slug, title, state, rank, headline and latest
+    update, and each step's id, title, position, status and card counts; it omits summaries,
+    repos, plan pointers, progress bars, step dependencies and timestamps. full returns
+    everything. Read-only."""
     suffix = "?all=true" if include_closed else ""
-    return await _sazed("GET", f"/board/projects{suffix}")
+    data = await _sazed("GET", f"/board/projects{suffix}")
+    if detail == "full":
+        return data
+    return {"projects": [_project_brief(p, cards=False) for p in data["projects"]]}
 
 
 @mcp.tool(meta=_card("ProjectWidget"))
-async def board_project(slug: str) -> dict[str, Any]:
+async def board_project(
+    slug: str, detail: Literal["summary", "full"] = "summary"
+) -> dict[str, Any]:
     """One project by slug from board_projects: its workstream ladder with every card under
-    each step (stage, what happens next, PR). Read-only."""
-    return await _sazed("GET", f"/board/projects/{slug}")
+    each step. detail summary (default) gives the project's slug, title, state, rank, headline
+    and latest update, and each step's id, title, position, status and card counts with each
+    card's id, title and stage; it omits what happens next, PRs, CI, jobs, repos, plan links,
+    effort, impact, step summaries and dispatch runs. full returns everything, or use
+    board_card for one card. Read-only."""
+    data = await _sazed("GET", f"/board/projects/{slug}")
+    if detail == "full":
+        return data
+    return _project_brief(data, cards=True)
 
 
 @mcp.tool()
@@ -796,7 +847,8 @@ async def board_file_card(
         body["impact"] = impact
     if allow_similar:
         body |= {"allow_similar": True, "similar_reason": similar_reason}
-    return await _sazed("POST", "/backlog", body)
+    result = await _sazed("POST", "/backlog", body)
+    return _written(result, {}, "id", "title", "status", "workstream_id", "plan_section")
 
 
 @mcp.tool()
@@ -804,7 +856,9 @@ async def board_move_card(card_id: str, workstream_id: str | None) -> dict[str, 
     """Put an existing card (id like item:<uuid> from board_list or board_project) under a
     workstream, or take it off its workstream with workstream_id null. Job-only cards can't
     be filed."""
-    return await _sazed("PATCH", f"/backlog/{_item_id(card_id)}", {"workstream_id": workstream_id})
+    body = {"workstream_id": workstream_id}
+    result = await _sazed("PATCH", f"/backlog/{_item_id(card_id)}", body)
+    return _written(result, body, "id", "title")
 
 
 @mcp.tool()
@@ -834,11 +888,9 @@ async def board_update_card(
         "plan": plan,
         "plan_section": plan_section,
     }
-    return await _sazed(
-        "PATCH",
-        f"/backlog/{_item_id(card_id)}",
-        {k: v for k, v in body.items() if v is not None},
-    )
+    sent = {k: v for k, v in body.items() if v is not None}
+    result = await _sazed("PATCH", f"/backlog/{_item_id(card_id)}", sent)
+    return _written(result, sent, "id", "title", "status")
 
 
 def _item_id(card_id: str) -> str:
@@ -883,9 +935,9 @@ async def board_update_project(
         "plan": plan,
         "repos": repos,
     }
-    return await _sazed(
-        "PATCH", f"/board/projects/{slug}", {k: v for k, v in body.items() if v is not None}
-    )
+    sent = {k: v for k, v in body.items() if v is not None}
+    result = await _sazed("PATCH", f"/board/projects/{slug}", sent)
+    return _written(result, sent, "slug", "title", "state")
 
 
 @mcp.tool()
@@ -900,11 +952,9 @@ async def board_add_workstream(
     workstream ids in the same project that must be done first (the step shows as blocked
     until they are)."""
     body = {"title": title, "summary": summary, "position": position, "depends_on": depends_on}
-    return await _sazed(
-        "POST",
-        f"/board/projects/{slug}/workstreams",
-        {k: v for k, v in body.items() if v is not None},
-    )
+    sent = {k: v for k, v in body.items() if v is not None}
+    result = await _sazed("POST", f"/board/projects/{slug}/workstreams", sent)
+    return _step_written(result, sent, lambda step: step.get("title") == title)
 
 
 @mcp.tool()
@@ -925,11 +975,9 @@ async def board_update_workstream(
         "position": position,
         "depends_on": depends_on,
     }
-    return await _sazed(
-        "PATCH",
-        f"/board/workstreams/{workstream_id}",
-        {k: v for k, v in body.items() if v is not None},
-    )
+    sent = {k: v for k, v in body.items() if v is not None}
+    result = await _sazed("PATCH", f"/board/workstreams/{workstream_id}", sent)
+    return _step_written(result, sent, lambda step: step.get("id") == workstream_id)
 
 
 @mcp.tool()
