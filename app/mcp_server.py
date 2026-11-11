@@ -752,7 +752,8 @@ def _step_brief(step: dict, cards: bool) -> dict[str, Any]:
     out["progress"] = step.get("progress")
     if cards:
         out["cards"] = [
-            {k: card.get(k) for k in ("id", "title", "stage")} for card in step.get("cards", [])
+            {k: card.get(k) for k in ("id", "title", "stage", "rank")}
+            for card in step.get("cards", [])
         ]
     return out
 
@@ -803,7 +804,7 @@ async def board_list(
         "cards": [
             {
                 key: card.get(key)
-                for key in ("id", "title", "stage", "next", "repo", "pr_url", "ci_state")
+                for key in ("id", "title", "stage", "rank", "next", "repo", "pr_url", "ci_state")
             }
             for card in cards
         ],
@@ -843,7 +844,7 @@ async def board_project(
     """One project by slug from board_projects: its workstream ladder with every card under
     each step. detail summary (default) gives the project's slug, title, state, rank, headline
     and latest update, and each step's id, title, position, status and card counts with each
-    card's id, title and stage; it omits what happens next, PRs, CI, jobs, repos, plan links,
+    card's id, title, stage and rank; it omits what happens next, PRs, CI, jobs, repos, plan links,
     effort, impact, step summaries and dispatch runs. full returns everything, or use
     board_card for one card. Read-only."""
     data = await _sazed("GET", f"/board/projects/{slug}")
@@ -864,6 +865,7 @@ async def board_file_card(
     plan_section: str | None = None,
     effort: Literal["S", "M", "L"] | None = None,
     impact: Literal["low", "medium", "high"] | None = None,
+    rank: int | None = None,
     allow_similar: bool = False,
     similar_reason: str | None = None,
 ) -> dict[str, Any]:
@@ -871,6 +873,7 @@ async def board_file_card(
     Use for real work that belongs to a project; ideas with no project go in the backlog
     without a workstream. When the work comes from a plan, pass the plan's slug and the
     section id it implements (from plan_read), so the card shows under that section.
+    rank puts the new card at that priority (1 = top, others shift); left out, it is unranked.
     Fails if a similar card already exists: move that one instead with board_move_card. Only
     when the card is genuinely distinct, pass allow_similar true with similar_reason saying why."""
     if allow_similar and not similar_reason:
@@ -889,6 +892,8 @@ async def board_file_card(
         body["effort"] = effort
     if impact:
         body["impact"] = impact
+    if rank is not None:
+        body["rank"] = rank
     if allow_similar:
         body |= {"allow_similar": True, "similar_reason": similar_reason}
     result = await _sazed("POST", "/backlog", body)
@@ -917,6 +922,8 @@ async def board_update_card(
     title: str | None = None,
     summary: str | None = None,
     why: str | None = None,
+    effort: Literal["S", "M", "L"] | None = None,
+    impact: Literal["low", "medium", "high"] | None = None,
     plan: str | None = None,
     plan_section: str | None = None,
     session: str | None = None,
@@ -928,6 +935,7 @@ async def board_update_card(
     duplicate or dead card (note names the original or the reason), park an idea for later
     (off the board, never stale), or reopen it as new. rank sets an open card's priority
     (1 = top, others shift). note records why; title, summary and why rewrite the card's text.
+    effort (S, M or L) and impact (low, medium or high) re-estimate it.
     plan links the card to a plan by slug, and plan_section to a section id from plan_read.
     To mark a card started from a terminal session, set session (a free-text label), branch
     and pr (a GitHub PR URL or owner/repo#number): the card moves to doing, and merging that
@@ -942,6 +950,8 @@ async def board_update_card(
         "title": title,
         "summary": summary,
         "why": why,
+        "effort": effort,
+        "impact": impact,
         "plan": plan,
         "plan_section": plan_section,
     }
@@ -950,6 +960,31 @@ async def board_update_card(
         sent["link"] = link or None
     result = await _sazed("PATCH", f"/backlog/{_item_id(card_id)}", sent)
     return _written(result, sent, "id", "title", "status")
+
+
+_MAX_BATCH = 50
+
+
+@mcp.tool(annotations=_WRITE_IDEMPOTENT)
+async def board_update_cards(updates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Change several backlog cards in one call. Each entry in updates is an object with card_id
+    and any of the fields board_update_card takes (status, rank, note, title, summary, why,
+    effort, impact, plan, plan_section, session, branch, pr, unlink_session). At most 50
+    entries. They are applied in order, so a rank change in one entry shifts the cards the next
+    one sees. This is not atomic: one entry failing does not stop the others, and entries
+    already applied stay applied. Returns one result per entry in the same order: id, ok, and
+    error (the reason) when it failed."""
+    if len(updates) > _MAX_BATCH:
+        raise ToolError(f"At most {_MAX_BATCH} updates per call; got {len(updates)}")
+    results = []
+    for entry in updates:
+        card_id = entry.get("card_id")
+        try:
+            await board_update_card(**entry)
+            results.append({"id": card_id, "ok": True})
+        except (ToolError, TypeError) as e:
+            results.append({"id": card_id, "ok": False, "error": str(e)})
+    return {"results": results}
 
 
 def _item_id(card_id: str) -> str:
