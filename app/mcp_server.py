@@ -117,9 +117,9 @@ def _recorded_tool(*dargs, **dkwargs):
 mcp.tool = _recorded_tool  # type: ignore[method-assign]
 
 
-def _detail_text(detail: Any) -> str:
+def _detail_text(detail: Any, existing: dict | None = None) -> str:
     """An upstream error detail as plain text: one short clause per invalid field for a 422 list,
-    and the matched card for a duplicate-card 409."""
+    and the matched card (sazed's `existing` sibling of `detail`) for a duplicate-card 409."""
     if isinstance(detail, list):
         clauses = []
         for problem in detail:
@@ -129,11 +129,11 @@ def _detail_text(detail: Any) -> str:
             loc = [str(part) for part in problem.get("loc", ()) if part not in _LOC_SCOPES]
             clauses.append(f"{'.'.join(loc)}: {problem['msg']}" if loc else str(problem["msg"]))
         return "; ".join(clauses)
-    if isinstance(detail, dict):
-        found = detail.get("duplicate") or detail.get("matched") or detail
-        match = [f"{k} {found[k]}" for k in ("id", "status", "title") if found.get(k)]
-        message = detail.get("message") or detail.get("detail") or "Already on the board"
-        return f"{message} ({', '.join(match)})" if match else str(message)
+    if isinstance(existing, dict) and existing.get("id"):
+        return (
+            f"{detail} (matched item:{existing['id']}, status {existing.get('status')}, "
+            f"title {existing.get('title')!r})"
+        )
     return str(detail)
 
 
@@ -542,10 +542,11 @@ async def _sazed(method: str, path: str, body: dict | None = None) -> Any:
         raise ToolError(f"Sazed unreachable: {e}") from e
     if resp.status_code >= 400:
         try:
-            detail = resp.json().get("detail", resp.text)
-        except ValueError:
-            detail = resp.text
-        raise ToolError(_detail_text(detail))
+            payload = resp.json()
+            detail, existing = payload.get("detail", resp.text), payload.get("existing")
+        except (ValueError, AttributeError):
+            detail, existing = resp.text, None
+        raise ToolError(_detail_text(detail, existing))
     return resp.json()
 
 
@@ -891,7 +892,10 @@ async def board_file_card(
     if allow_similar:
         body |= {"allow_similar": True, "similar_reason": similar_reason}
     result = await _sazed("POST", "/backlog", body)
-    return _written(result, {}, "id", "title", "status", "workstream_id", "plan_section")
+    out = _written(result, {}, "id", "title", "status", "workstream_id", "plan_section")
+    if parked := result.get("similar_parked"):
+        out["similar_parked"] = {k: parked.get(k) for k in ("id", "title", "status")}
+    return out
 
 
 @mcp.tool(annotations=_WRITE_IDEMPOTENT)
