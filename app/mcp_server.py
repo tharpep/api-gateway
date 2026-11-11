@@ -117,11 +117,34 @@ def _recorded_tool(*dargs, **dkwargs):
 mcp.tool = _recorded_tool  # type: ignore[method-assign]
 
 
+def _detail_text(detail: Any) -> str:
+    """An upstream error detail as plain text: one short clause per invalid field for a 422 list,
+    and the matched card for a duplicate-card 409."""
+    if isinstance(detail, list):
+        clauses = []
+        for problem in detail:
+            if not isinstance(problem, dict) or "msg" not in problem:
+                clauses.append(str(problem))
+                continue
+            loc = [str(part) for part in problem.get("loc", ()) if part not in _LOC_SCOPES]
+            clauses.append(f"{'.'.join(loc)}: {problem['msg']}" if loc else str(problem["msg"]))
+        return "; ".join(clauses)
+    if isinstance(detail, dict):
+        found = detail.get("duplicate") or detail.get("matched") or detail
+        match = [f"{k} {found[k]}" for k in ("id", "status", "title") if found.get(k)]
+        message = detail.get("message") or detail.get("detail") or "Already on the board"
+        return f"{message} ({', '.join(match)})" if match else str(message)
+    return str(detail)
+
+
+_LOC_SCOPES = ("body", "query", "path")
+
+
 async def _call(coro):
     try:
         return await coro
     except HTTPException as e:
-        raise ToolError(str(e.detail)) from e
+        raise ToolError(_detail_text(e.detail)) from e
 
 
 # MCP Apps cards: tools point at a ui:// page, and hosts that support it (Claude Desktop) draw the
@@ -376,7 +399,7 @@ async def _kb(path: str, body: dict) -> Any:
             kb._kb_url(path), json=body, headers=kb._kb_headers(), timeout=kb._TIMEOUT
         )
     except HTTPException as e:
-        raise ToolError(str(e.detail)) from e
+        raise ToolError(_detail_text(e.detail)) from e
     except httpx.HTTPError as e:
         raise ToolError(f"Knowledge base unreachable: {e}") from e
     if resp.status_code >= 400:
@@ -384,7 +407,7 @@ async def _kb(path: str, body: dict) -> Any:
             detail = resp.json().get("detail", resp.text)
         except ValueError:
             detail = resp.text
-        raise ToolError(str(detail))
+        raise ToolError(_detail_text(detail))
     return resp.json()
 
 
@@ -522,7 +545,7 @@ async def _sazed(method: str, path: str, body: dict | None = None) -> Any:
             detail = resp.json().get("detail", resp.text)
         except ValueError:
             detail = resp.text
-        raise ToolError(str(detail))
+        raise ToolError(_detail_text(detail))
     return resp.json()
 
 
