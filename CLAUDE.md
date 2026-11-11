@@ -24,7 +24,7 @@ ruff check app/
 ruff format app/
 ```
 
-No test suite exists yet.
+Tests: `poetry run pytest -q`. `tests/test_mcp_tools.py` pins the MCP tool names and annotations, so adding or renaming a tool means editing it.
 
 ## Architecture
 
