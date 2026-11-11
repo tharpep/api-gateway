@@ -24,10 +24,15 @@ pyyaml = "^6.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.9.0"
+pytest = "^9.2.0"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
