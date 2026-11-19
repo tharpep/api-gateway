@@ -15,7 +15,7 @@ import calendar
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import jwt
@@ -195,6 +195,8 @@ class PullRequestFromFiles(BaseModel):
     # The PR a follow-up continues (Sazed sends its parent's). If that PR isn't open anymore, the
     # request is refused before anything is committed: closed work isn't reopened as a new PR.
     pr_number: int | None = None
+    base_sha: str | None = Field(None, pattern=r"^[0-9a-fA-F]{40}$")
+    modes: dict[str, Literal["100644", "100755", "120000"]] | None = None
 
 
 def _check_path(path: str) -> None:
@@ -233,6 +235,29 @@ async def _ref_sha(r: str, branch: str, token: str) -> str | None:
         raise
 
 
+async def _check_ancestor(r: str, sha: str, base: str, token: str) -> None:
+    try:
+        compare = await _call("GET", f"{r}/compare/{sha}...{base}", token)
+    except HTTPException as e:
+        if e.status_code == 404:
+            raise HTTPException(
+                422, f"base_sha {sha} not found or shares no history with '{base}'"
+            ) from e
+        raise
+    if compare.get("status") != "ahead":
+        raise HTTPException(422, f"base_sha {sha} isn't an ancestor of '{base}'")
+
+
+def _inline_text(data: bytes) -> str | None:
+    """The content as tree-call text, or None when it needs a blob call."""
+    if not data or b"\0" in data:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 @router.post("/pull-request", status_code=201)
 async def pull_request_from_files(req: PullRequestFromFiles):
     """Commit the given files on a sazed/... branch and open (or update) its PR as the bot.
@@ -241,6 +266,10 @@ async def pull_request_from_files(req: PullRequestFromFiles):
     its parents changed. A new branch starts from the base. An existing branch gets a new commit
     whose tree is the merge base plus `files`, so a file a follow-up put back to its original
     content is reverted on the branch too; the open PR is reused.
+
+    With `base_sha`, the tree is built from that commit instead, and a new branch grows from it.
+    `modes` sets a path's file mode. UTF-8 text goes inline in the tree call; other content gets
+    a blob call each.
     """
     owner, name = _check_repo(req.repo)
     if not _BRANCH_RE.match(req.branch):
@@ -255,6 +284,17 @@ async def pull_request_from_files(req: PullRequestFromFiles):
         total += len(content or "")
     if total > _MAX_TOTAL_BYTES * 4 // 3:
         raise HTTPException(422, "changes are too large")
+    requested_modes = req.modes or {}
+    for path in requested_modes:
+        if req.files.get(path) is None:
+            raise HTTPException(422, f"mode for '{path}', which has no content in files")
+    decoded: dict[str, bytes] = {}
+    for path, content in req.files.items():
+        if content is not None:
+            try:
+                decoded[path] = base64.b64decode(content, validate=True)
+            except ValueError as e:
+                raise HTTPException(422, f"content of '{path}' isn't valid base64") from e
 
     token, _ = await installation_token(req.repo, {"contents": "write", "pull_requests": "write"})
     r = f"/repos/{owner}/{name}"
@@ -265,26 +305,38 @@ async def pull_request_from_files(req: PullRequestFromFiles):
                 409, f"PR #{req.pr_number} is closed or no longer on {req.branch}; not reopening it"
             )
     base = req.base or (await _call("GET", r, token))["default_branch"]
-    base_sha = await _ref_sha(r, base, token)
-    if base_sha is None:
+    base_tip = await _ref_sha(r, base, token)
+    if base_tip is None:
         raise HTTPException(422, f"base branch '{base}' not found")
+    from_sha = req.base_sha.lower() if req.base_sha else None
+    base_moved = from_sha is not None and from_sha != base_tip
+    if base_moved:
+        await _check_ancestor(r, from_sha, base, token)
     head_sha = await _ref_sha(r, req.branch, token)
-    if head_sha is None:
-        start_sha, parent_sha = base_sha, base_sha
+    if from_sha is not None:
+        start_sha, parent_sha = from_sha, head_sha or from_sha
+    elif head_sha is None:
+        start_sha, parent_sha = base_tip, base_tip
     else:
         compare = await _call("GET", f"{r}/compare/{base}...{req.branch}", token)
         start_sha, parent_sha = compare["merge_base_commit"]["sha"], head_sha
     start_tree = (await _call("GET", f"{r}/git/commits/{start_sha}", token))["tree"]["sha"]
     # Keep existing file modes (e.g. executable scripts); new files are regular files.
     existing = await _call("GET", f"{r}/git/trees/{start_tree}?recursive=1", token)
-    modes = {e["path"]: e["mode"] for e in existing.get("tree", []) if e.get("type") == "blob"}
+    start_modes = {
+        e["path"]: e["mode"] for e in existing.get("tree", []) if e.get("type") == "blob"
+    }
 
     entries = []
     for path, content in sorted(req.files.items()):
-        mode = modes.get(path, "100644")
+        mode = requested_modes.get(path) or start_modes.get(path, "100644")
         if content is None:
-            if path in modes:
+            if path in start_modes:
                 entries.append({"path": path, "mode": mode, "type": "blob", "sha": None})
+            continue
+        text = _inline_text(decoded[path])
+        if text is not None:
+            entries.append({"path": path, "mode": mode, "type": "blob", "content": text})
             continue
         blob = await _call(
             "POST", f"{r}/git/blobs", token, json={"content": content, "encoding": "base64"}
@@ -346,7 +398,7 @@ async def pull_request_from_files(req: PullRequestFromFiles):
         pr["number"],
         len(entries),
     )
-    return {
+    result = {
         "number": pr["number"],
         "url": pr["html_url"],
         "branch": req.branch,
@@ -355,3 +407,6 @@ async def pull_request_from_files(req: PullRequestFromFiles):
         "head_sha": commit["sha"],
         "draft": bool(pr.get("draft")),
     }
+    if from_sha is not None:
+        result["base_moved"] = base_moved
+    return result

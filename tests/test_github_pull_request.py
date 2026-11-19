@@ -88,7 +88,9 @@ class FakeGitHub:
             if base_sha is None or head_sha is None:
                 return httpx.Response(404, json={"message": "Not Found"})
             head_anc, base_anc = self._ancestors(head_sha), self._ancestors(base_sha)
-            merge_base = next(c for c in head_anc if c in base_anc)
+            merge_base = next((c for c in head_anc if c in base_anc), None)
+            if merge_base is None:
+                return httpx.Response(404, json={"message": "No common ancestor"})
             if base_sha == head_sha:
                 status = "identical"
             elif merge_base == base_sha:
@@ -210,22 +212,19 @@ def request(**extra):
 
 
 def test_pin_old_style_request_on_a_new_branch(gh, api):
-    """Pins the calls and bodies for a request without base_sha or modes, as on d813fd3."""
+    """Pins the calls for a request without base_sha or modes: d813fd3's, text inline (G6-5)."""
     resp = api.post("/github/app/pull-request", json=request())
     assert resp.status_code == 201, resp.text
 
     main_tree = gh.commits[gh.root]["tree"]
     new_tree = gh.commits[resp.json()["head_sha"]]["tree"]
-    run_sha = blob_sha(b"#!/bin/sh\necho new\n")
-    new_sha = blob_sha(b"fresh\n")
+    run_text = "#!/bin/sh\necho new\n"
     assert gh.calls == [
         ("GET", "", None),
         ("GET", "/git/ref/heads/main", None),
         ("GET", "/git/ref/heads/sazed/job-1", None),
         ("GET", f"/git/commits/{gh.root}", None),
         ("GET", f"/git/trees/{main_tree}", {"recursive": "1"}),
-        ("POST", "/git/blobs", {"content": b64(b"fresh\n"), "encoding": "base64"}),
-        ("POST", "/git/blobs", {"content": b64(b"#!/bin/sh\necho new\n"), "encoding": "base64"}),
         (
             "POST",
             "/git/trees",
@@ -233,8 +232,8 @@ def test_pin_old_style_request_on_a_new_branch(gh, api):
                 "base_tree": main_tree,
                 "tree": [
                     {"path": "README.md", "mode": "100644", "type": "blob", "sha": None},
-                    {"path": "new.txt", "mode": "100644", "type": "blob", "sha": new_sha},
-                    {"path": "run.sh", "mode": "100755", "type": "blob", "sha": run_sha},
+                    {"path": "new.txt", "mode": "100644", "type": "blob", "content": "fresh\n"},
+                    {"path": "run.sh", "mode": "100755", "type": "blob", "content": run_text},
                 ],
             },
         ),
@@ -298,19 +297,13 @@ def test_pin_old_style_follow_up_on_an_existing_branch(gh, api):
         ("GET", "/compare/main...sazed/job-1", None),
         ("GET", f"/git/commits/{gh.root}", None),
         ("GET", f"/git/trees/{main_tree}", {"recursive": "1"}),
-        ("POST", "/git/blobs", {"content": b64(b"fresher\n"), "encoding": "base64"}),
         (
             "POST",
             "/git/trees",
             {
                 "base_tree": main_tree,
                 "tree": [
-                    {
-                        "path": "new.txt",
-                        "mode": "100644",
-                        "type": "blob",
-                        "sha": blob_sha(b"fresher\n"),
-                    }
+                    {"path": "new.txt", "mode": "100644", "type": "blob", "content": "fresher\n"}
                 ],
             },
         ),
@@ -334,3 +327,195 @@ def test_pin_old_style_follow_up_on_an_existing_branch(gh, api):
         "logo.png": ("100644", b"\x89PNG\r\n\x1a\n\x00\x00"),
         "new.txt": ("100644", b"fresher\n"),
     }
+
+
+def advance_main(gh) -> str:
+    files = gh.files_at("main")
+    files["README.md"] = ("100644", b"upstream edit\n")
+    gh.refs["main"] = gh.commit(gh.tree(files), [gh.refs["main"]], "upstream")
+    return gh.refs["main"]
+
+
+def export(**extra):
+    return request(files={"new.txt": b64(b"fresh\n"), "README.md": None}, draft=True, **extra)
+
+
+def writes(gh) -> list[tuple[str, str]]:
+    return [(m, p) for m, p, _ in gh.calls if m != "GET"]
+
+
+def test_base_sha_on_a_new_branch_grows_from_that_commit(gh, api):
+    """G6-2/G6-3: parent and tree come from base_sha, not the moved tip, and base_moved is set."""
+    tip = advance_main(gh)
+
+    resp = api.post("/github/app/pull-request", json=export(base_sha=gh.root))
+    assert resp.status_code == 201, resp.text
+
+    head = resp.json()["head_sha"]
+    assert gh.commits[head]["parents"] == [gh.root]
+    assert gh.files_at(head) == {
+        "run.sh": ("100755", b"#!/bin/sh\necho old\n"),
+        "logo.png": ("100644", b"\x89PNG\r\n\x1a\n\x00\x00"),
+        "new.txt": ("100644", b"fresh\n"),
+    }
+    assert resp.json()["base_moved"] is True
+    assert [(m, p) for m, p, _ in gh.calls] == [
+        ("GET", ""),
+        ("GET", "/git/ref/heads/main"),
+        ("GET", f"/compare/{gh.root}...main"),
+        ("GET", "/git/ref/heads/sazed/job-1"),
+        ("GET", f"/git/commits/{gh.root}"),
+        ("GET", f"/git/trees/{gh.commits[gh.root]['tree']}"),
+        ("POST", "/git/trees"),
+        ("POST", "/git/commits"),
+        ("POST", "/git/refs"),
+        ("GET", "/pulls"),
+        ("POST", "/pulls"),
+    ]
+    assert gh.refs["main"] == tip
+
+
+def test_base_sha_at_the_tip_is_not_moved(gh, api):
+    """G6-3: base_moved is false when the tip is base_sha, and no ancestry check is needed."""
+    resp = api.post("/github/app/pull-request", json=export(base_sha=gh.root.upper()))
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["base_moved"] is False
+    assert gh.commits[resp.json()["head_sha"]]["parents"] == [gh.root]
+    assert not any(p.startswith("/compare/") for _, p, _ in gh.calls)
+
+
+def test_base_sha_on_an_existing_branch_fast_forwards_the_head(gh, api):
+    """G6-2: tree from base_sha plus files, parent the branch head, no force; the PR is reused."""
+    first = api.post("/github/app/pull-request", json=export(base_sha=gh.root)).json()
+    advance_main(gh)
+    gh.calls.clear()
+
+    resp = api.post(
+        "/github/app/pull-request",
+        json=request(files={"new.txt": b64(b"fresher\n")}, base_sha=gh.root, draft=True),
+    )
+    assert resp.status_code == 201, resp.text
+
+    head = resp.json()["head_sha"]
+    assert gh.commits[head]["parents"] == [first["head_sha"]]
+    assert gh.files_at(head) == {
+        "README.md": ("100644", b"hello\n"),
+        "run.sh": ("100755", b"#!/bin/sh\necho old\n"),
+        "logo.png": ("100644", b"\x89PNG\r\n\x1a\n\x00\x00"),
+        "new.txt": ("100644", b"fresher\n"),
+    }
+    assert ("PATCH", "/git/refs/heads/sazed/job-1", {"sha": head, "force": False}) in gh.calls
+    assert writes(gh) == [
+        ("POST", "/git/trees"),
+        ("POST", "/git/commits"),
+        ("PATCH", "/git/refs/heads/sazed/job-1"),
+    ]
+    assert resp.json()["updated"] is True
+    assert resp.json()["base_moved"] is True
+
+
+def test_base_sha_off_the_base_branch_is_refused_before_any_write(gh, api):
+    """G6-2: a base_sha that isn't an ancestor of the base, or doesn't exist, writes nothing."""
+    stray = gh.commit(gh.tree({"other.txt": ("100644", b"x\n")}), [gh.root], "stray")
+
+    resp = api.post("/github/app/pull-request", json=export(base_sha=stray))
+    assert resp.status_code == 422
+    assert "isn't an ancestor of 'main'" in resp.json()["detail"]
+
+    resp = api.post("/github/app/pull-request", json=export(base_sha="ab" * 20))
+    assert resp.status_code == 422
+    assert "not found" in resp.json()["detail"]
+
+    assert writes(gh) == []
+    assert "sazed/job-1" not in gh.refs
+
+
+def test_modes_are_written_including_symlinks_and_mode_only_changes(gh, api):
+    """G6-4: listed modes win; a 120000 entry's content is the link target; same content, new
+    mode is still written."""
+    files = {
+        "tools/build.sh": b64(b"#!/bin/sh\nmake\n"),
+        "latest": b64(b"run.sh"),
+        "README.md": b64(b"hello\n"),
+        "run.sh": b64(b"#!/bin/sh\necho old\n"),
+    }
+    modes = {
+        "tools/build.sh": "100755",
+        "latest": "120000",
+        "README.md": "100755",
+        "run.sh": "100644",
+    }
+
+    resp = api.post(
+        "/github/app/pull-request", json=request(files=files, modes=modes, base_sha=gh.root)
+    )
+    assert resp.status_code == 201, resp.text
+
+    tree_call = next(b for m, p, b in gh.calls if (m, p) == ("POST", "/git/trees"))
+    assert tree_call["tree"] == [
+        {"path": "README.md", "mode": "100755", "type": "blob", "content": "hello\n"},
+        {"path": "latest", "mode": "120000", "type": "blob", "content": "run.sh"},
+        {"path": "run.sh", "mode": "100644", "type": "blob", "content": "#!/bin/sh\necho old\n"},
+        {
+            "path": "tools/build.sh",
+            "mode": "100755",
+            "type": "blob",
+            "content": "#!/bin/sh\nmake\n",
+        },
+    ]
+    assert gh.files_at("sazed/job-1") == {
+        "README.md": ("100755", b"hello\n"),
+        "latest": ("120000", b"run.sh"),
+        "run.sh": ("100644", b"#!/bin/sh\necho old\n"),
+        "tools/build.sh": ("100755", b"#!/bin/sh\nmake\n"),
+        "logo.png": ("100644", b"\x89PNG\r\n\x1a\n\x00\x00"),
+    }
+
+
+def test_text_goes_inline_and_other_content_gets_a_blob_call(gh, api):
+    """G6-5: UTF-8 text rides in the tree call; non-UTF-8, NUL-bearing and empty files get
+    blob calls."""
+    binary = b"\x89PNG\r\n\x1a\n\xff\xfe"
+    files = {
+        "logo.png": b64(binary),
+        "notes.md": b64("café ✓\r\n".encode()),
+        "nul.dat": b64(b"a\0b"),
+        "empty.txt": "",
+    }
+
+    resp = api.post("/github/app/pull-request", json=request(files=files))
+    assert resp.status_code == 201, resp.text
+
+    blob_calls = [b["content"] for m, p, b in gh.calls if (m, p) == ("POST", "/git/blobs")]
+    assert blob_calls == [b64(b""), b64(binary), b64(b"a\0b")]
+    tree_call = next(b for m, p, b in gh.calls if (m, p) == ("POST", "/git/trees"))
+    assert tree_call["tree"][2] == {
+        "path": "notes.md",
+        "mode": "100644",
+        "type": "blob",
+        "content": "café ✓\r\n",
+    }
+    assert gh.files_at("sazed/job-1")["notes.md"] == ("100644", "café ✓\r\n".encode())
+    assert gh.files_at("sazed/job-1")["logo.png"] == ("100644", binary)
+
+
+@pytest.mark.parametrize(
+    ("extra", "detail"),
+    [
+        ({"files": {f"f{i}.txt": b64(b"x") for i in range(201)}}, "too many files"),
+        ({"files": {"big.bin": "A" * (5 * 1024 * 1024 * 4 // 3 + 4)}}, "too large"),
+        ({"files": {"a.txt": "not base64!"}}, "valid base64"),
+        ({"modes": {"README.md": "100755"}}, "has no content"),
+        ({"modes": {"ghost.sh": "100755"}}, "has no content"),
+        ({"modes": {"run.sh": "160000"}}, None),
+        ({"base_sha": "main"}, None),
+        ({"files": {".github/workflows/ci.yml": b64(b"x")}}, "aren't allowed"),
+    ],
+)
+def test_bad_requests_are_refused_before_any_github_call(gh, api, extra, detail):
+    """G6-5 and validation: limits, content, modes and base_sha are checked before GitHub."""
+    resp = api.post("/github/app/pull-request", json=request(**extra))
+    assert resp.status_code == 422
+    if detail:
+        assert detail in resp.json()["detail"]
+    assert gh.calls == []
