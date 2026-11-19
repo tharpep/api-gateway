@@ -12,6 +12,7 @@ pull), so no git push or hooks run anywhere, and the branch name is checked to b
 
 import base64
 import calendar
+import hashlib
 import logging
 import re
 import time
@@ -203,7 +204,11 @@ def _check_path(path: str) -> None:
     parts = path.split("/")
     if not path or path.startswith("/") or ".." in parts or "" in parts:
         raise HTTPException(422, f"bad path '{path}'")
-    if parts[0] == ".git" or path.startswith(".github/workflows/"):
+    if (
+        parts[0] == ".git"
+        or path in (".github", ".github/workflows")
+        or path.startswith(".github/workflows/")
+    ):
         raise HTTPException(422, f"changes to '{path}' aren't allowed (git internals / workflows)")
 
 
@@ -248,6 +253,30 @@ async def _check_ancestor(r: str, sha: str, base: str, token: str) -> None:
         raise HTTPException(422, f"base_sha {sha} isn't an ancestor of '{base}'")
 
 
+async def _check_descends(r: str, sha: str, merge_base: str, branch: str, token: str) -> None:
+    compare = await _call("GET", f"{r}/compare/{merge_base}...{sha}", token)
+    if compare.get("status") != "ahead":
+        raise HTTPException(
+            409,
+            f"{branch} already contains base commits newer than base_sha {sha}; "
+            "re-export from a newer base",
+        )
+
+
+async def _check_inline_stored(r: str, tree_sha: str, expected: dict[str, str], token: str):
+    stored = await _call("GET", f"{r}/git/trees/{tree_sha}?recursive=1", token)
+    if stored.get("truncated"):
+        raise HTTPException(502, "GitHub's new tree is too large to check the inline files")
+    shas = {e["path"]: e["sha"] for e in stored.get("tree", []) if e.get("type") == "blob"}
+    for path, sha in sorted(expected.items()):
+        if shas.get(path) != sha:
+            raise HTTPException(502, f"GitHub stored '{path}' with different bytes than sent")
+
+
+def _blob_sha(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
 def _inline_text(data: bytes) -> str | None:
     """The content as tree-call text, or None when it needs a blob call."""
     if not data or b"\0" in data:
@@ -268,8 +297,10 @@ async def pull_request_from_files(req: PullRequestFromFiles):
     content is reverted on the branch too; the open PR is reused.
 
     With `base_sha`, the tree is built from that commit instead, and a new branch grows from it.
-    `modes` sets a path's file mode. UTF-8 text goes inline in the tree call; other content gets
-    a blob call each.
+    On an existing branch, `base_sha` must be the branch's merge base with the base or descend
+    from it (a newer one becomes a second parent), else 409: an older one would revert base
+    commits already merged into the branch. `modes` sets a path's file mode. UTF-8 text goes
+    inline in the tree call and is read back before the commit; other content gets a blob call.
     """
     owner, name = _check_repo(req.repo)
     if not _BRANCH_RE.match(req.branch):
@@ -313,21 +344,31 @@ async def pull_request_from_files(req: PullRequestFromFiles):
     if base_moved:
         await _check_ancestor(r, from_sha, base, token)
     head_sha = await _ref_sha(r, req.branch, token)
-    if from_sha is not None:
-        start_sha, parent_sha = from_sha, head_sha or from_sha
-    elif head_sha is None:
-        start_sha, parent_sha = base_tip, base_tip
+    if head_sha is None:
+        start_sha = from_sha or base_tip
+        parents = [start_sha]
     else:
         compare = await _call("GET", f"{r}/compare/{base}...{req.branch}", token)
-        start_sha, parent_sha = compare["merge_base_commit"]["sha"], head_sha
+        merge_base = compare["merge_base_commit"]["sha"]
+        start_sha, parents = from_sha or merge_base, [head_sha]
+        if from_sha is not None and from_sha != merge_base:
+            await _check_descends(r, from_sha, merge_base, req.branch, token)
+            parents.append(from_sha)
     start_tree = (await _call("GET", f"{r}/git/commits/{start_sha}", token))["tree"]["sha"]
     # Keep existing file modes (e.g. executable scripts); new files are regular files.
     existing = await _call("GET", f"{r}/git/trees/{start_tree}?recursive=1", token)
     start_modes = {
         e["path"]: e["mode"] for e in existing.get("tree", []) if e.get("type") == "blob"
     }
+    if from_sha is not None:
+        if existing.get("truncated"):
+            raise HTTPException(422, f"the tree at base_sha {from_sha} is too large to read whole")
+        for path, content in sorted(req.files.items()):
+            if content is None and path not in start_modes:
+                raise HTTPException(422, f"'{path}' is deleted but isn't in base_sha {from_sha}")
 
     entries = []
+    inline_shas: dict[str, str] = {}
     for path, content in sorted(req.files.items()):
         mode = requested_modes.get(path) or start_modes.get(path, "100644")
         if content is None:
@@ -337,6 +378,7 @@ async def pull_request_from_files(req: PullRequestFromFiles):
         text = _inline_text(decoded[path])
         if text is not None:
             entries.append({"path": path, "mode": mode, "type": "blob", "content": text})
+            inline_shas[path] = _blob_sha(decoded[path])
             continue
         blob = await _call(
             "POST", f"{r}/git/blobs", token, json={"content": content, "encoding": "base64"}
@@ -348,11 +390,13 @@ async def pull_request_from_files(req: PullRequestFromFiles):
     tree = await _call(
         "POST", f"{r}/git/trees", token, json={"base_tree": start_tree, "tree": entries}
     )
+    if inline_shas:
+        await _check_inline_stored(r, tree["sha"], inline_shas, token)
     commit = await _call(
         "POST",
         f"{r}/git/commits",
         token,
-        json={"message": req.commit_message, "tree": tree["sha"], "parents": [parent_sha]},
+        json={"message": req.commit_message, "tree": tree["sha"], "parents": parents},
     )
     if head_sha is None:
         await _call(

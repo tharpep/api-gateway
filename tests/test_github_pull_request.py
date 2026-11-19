@@ -32,6 +32,9 @@ class FakeGitHub:
         self.commits: dict[str, dict] = {}
         self.refs: dict[str, str] = {}
         self.pulls: list[dict] = []
+        self.normalize_crlf = False
+        self.truncated: set[str] = set()
+        self.truncate_new_trees = False
 
     def tree(self, files: dict[str, tuple[str, bytes]]) -> str:
         entries = {}
@@ -110,11 +113,12 @@ class FakeGitHub:
                 200, json={"sha": sha, "tree": {"sha": self.commits[sha]["tree"]}}
             )
         if m == "GET" and sub.startswith("/git/trees/"):
-            entries = self.trees[sub[len("/git/trees/") :]]
+            sha = sub[len("/git/trees/") :]
             tree = [
-                {"path": p, "mode": md, "type": "blob", "sha": s} for p, (md, s) in entries.items()
+                {"path": p, "mode": md, "type": "blob", "sha": s}
+                for p, (md, s) in self.trees[sha].items()
             ]
-            return httpx.Response(200, json={"tree": tree, "truncated": False})
+            return httpx.Response(200, json={"tree": tree, "truncated": sha in self.truncated})
         if m == "POST" and sub == "/git/blobs":
             data = base64.b64decode(body["content"])
             sha = blob_sha(data)
@@ -126,7 +130,10 @@ class FakeGitHub:
                 if "sha" in e and "content" in e:
                     return httpx.Response(422, json={"message": "sha and content"})
                 if "content" in e:
-                    data = e["content"].encode()
+                    text = e["content"]
+                    if self.normalize_crlf:
+                        text = text.replace("\r\n", "\n")
+                    data = text.encode()
                     self.blobs[blob_sha(data)] = data
                     entries[e["path"]] = (e["mode"], blob_sha(data))
                 elif e["sha"] is None:
@@ -135,7 +142,10 @@ class FakeGitHub:
                     del entries[e["path"]]
                 else:
                     entries[e["path"]] = (e["mode"], e["sha"])
-            return httpx.Response(201, json={"sha": self._store_tree(entries)})
+            sha = self._store_tree(entries)
+            if self.truncate_new_trees:
+                self.truncated.add(sha)
+            return httpx.Response(201, json={"sha": sha})
         if m == "POST" and sub == "/git/commits":
             sha = self.commit(body["tree"], body["parents"], body["message"])
             return httpx.Response(201, json={"sha": sha})
@@ -212,7 +222,8 @@ def request(**extra):
 
 
 def test_pin_old_style_request_on_a_new_branch(gh, api):
-    """Pins the calls for a request without base_sha or modes: d813fd3's, text inline (G6-5)."""
+    """Pins the calls for a request without base_sha or modes: d813fd3's, with text inline and
+    read back before the commit (G6-5)."""
     resp = api.post("/github/app/pull-request", json=request())
     assert resp.status_code == 201, resp.text
 
@@ -237,6 +248,7 @@ def test_pin_old_style_request_on_a_new_branch(gh, api):
                 ],
             },
         ),
+        ("GET", f"/git/trees/{new_tree}", {"recursive": "1"}),
         (
             "POST",
             "/git/commits",
@@ -307,6 +319,7 @@ def test_pin_old_style_follow_up_on_an_existing_branch(gh, api):
                 ],
             },
         ),
+        ("GET", f"/git/trees/{gh.commits[head]['tree']}", {"recursive": "1"}),
         (
             "POST",
             "/git/commits",
@@ -367,6 +380,7 @@ def test_base_sha_on_a_new_branch_grows_from_that_commit(gh, api):
         ("GET", f"/git/commits/{gh.root}"),
         ("GET", f"/git/trees/{gh.commits[gh.root]['tree']}"),
         ("POST", "/git/trees"),
+        ("GET", f"/git/trees/{gh.commits[head]['tree']}"),
         ("POST", "/git/commits"),
         ("POST", "/git/refs"),
         ("GET", "/pulls"),
@@ -428,6 +442,89 @@ def test_base_sha_off_the_base_branch_is_refused_before_any_write(gh, api):
 
     assert writes(gh) == []
     assert "sazed/job-1" not in gh.refs
+
+
+def pr_diff(gh, head: str) -> dict:
+    merge_base = gh.handler(
+        httpx.Request("GET", f"https://api.github.com{R}/compare/main...{head}")
+    )
+    a = gh.files_at(merge_base.json()["merge_base_commit"]["sha"])
+    b = gh.files_at(head)
+    return {p: (a.get(p), b.get(p)) for p in a.keys() | b.keys() if a.get(p) != b.get(p)}
+
+
+def test_re_export_after_update_branch_with_an_older_base_sha_is_refused(gh, api):
+    """Review 1: once main was merged into the branch, re-exporting from the older base_sha
+    would revert main's commits on the branch, so it is a 409 that writes nothing."""
+    api.post("/github/app/pull-request", json=export(base_sha=gh.root))
+    b2 = advance_main(gh)
+    head = gh.refs["sazed/job-1"]
+    merged = gh.files_at(head)
+    merged["README.md"] = gh.files_at(b2)["README.md"]
+    gh.refs["sazed/job-1"] = gh.commit(gh.tree(merged), [head, b2], "Merge main")
+    merged_head = gh.refs["sazed/job-1"]
+    gh.calls.clear()
+
+    resp = api.post("/github/app/pull-request", json=export(base_sha=gh.root))
+    assert resp.status_code == 409
+    assert "newer than base_sha" in resp.json()["detail"]
+    assert writes(gh) == []
+    assert gh.refs["sazed/job-1"] == merged_head
+
+
+def test_re_export_with_a_newer_base_sha_adds_it_as_a_second_parent(gh, api):
+    """Review 2: a plan rebuilt on a newer base gets that base as a second parent, so the PR
+    diff shows only the plan's changes and the ref still fast-forwards."""
+    first = api.post("/github/app/pull-request", json=export(base_sha=gh.root)).json()
+    b2 = advance_main(gh)
+
+    resp = api.post(
+        "/github/app/pull-request", json=request(files={"new.txt": b64(b"fresh\n")}, base_sha=b2)
+    )
+    assert resp.status_code == 201, resp.text
+
+    head = resp.json()["head_sha"]
+    assert gh.commits[head]["parents"] == [first["head_sha"], b2]
+    assert ("PATCH", "/git/refs/heads/sazed/job-1", {"sha": head, "force": False}) in gh.calls
+    assert pr_diff(gh, head) == {"new.txt": (None, ("100644", b"fresh\n"))}
+    assert resp.json()["base_moved"] is False
+
+
+def test_base_sha_refuses_a_delete_it_does_not_have_and_a_truncated_tree(gh, api):
+    """Review 3: with base_sha, the map and the tree must agree, so both are 422s before any
+    write. Without base_sha, today's behaviour holds (the pins drop the unknown delete)."""
+    resp = api.post(
+        "/github/app/pull-request",
+        json=request(files={"new.txt": b64(b"x\n"), "gone.txt": None}, base_sha=gh.root),
+    )
+    assert resp.status_code == 422
+    assert "'gone.txt' is deleted but isn't in base_sha" in resp.json()["detail"]
+
+    gh.truncated.add(gh.commits[gh.root]["tree"])
+    resp = api.post("/github/app/pull-request", json=export(base_sha=gh.root))
+    assert resp.status_code == 422
+    assert "too large to read whole" in resp.json()["detail"]
+    assert writes(gh) == []
+
+    resp = api.post("/github/app/pull-request", json=request())
+    assert resp.status_code == 201, resp.text
+
+
+@pytest.mark.parametrize("damage", ["normalize_crlf", "truncate_new_trees"])
+def test_inline_text_github_did_not_store_byte_for_byte_stops_before_the_commit(gh, api, damage):
+    """Review 5: inline files are read back after the tree call; altered bytes or an unreadable
+    tree stop with a 502 before any commit or ref moves."""
+    setattr(gh, damage, True)
+
+    resp = api.post(
+        "/github/app/pull-request",
+        json=request(files={"a.txt": b64(b"one\n"), "win.txt": b64(b"line\r\n")}),
+    )
+    assert resp.status_code == 502
+    expected = "'win.txt'" if damage == "normalize_crlf" else "too large to check"
+    assert expected in resp.json()["detail"]
+    assert writes(gh) == [("POST", "/git/trees")]
+    assert gh.refs == {"main": gh.root}
 
 
 def test_modes_are_written_including_symlinks_and_mode_only_changes(gh, api):
@@ -510,6 +607,11 @@ def test_text_goes_inline_and_other_content_gets_a_blob_call(gh, api):
         ({"modes": {"run.sh": "160000"}}, None),
         ({"base_sha": "main"}, None),
         ({"files": {".github/workflows/ci.yml": b64(b"x")}}, "aren't allowed"),
+        (
+            {"files": {".github/workflows": b64(b"x")}, "modes": {".github/workflows": "120000"}},
+            "aren't allowed",
+        ),
+        ({"files": {".github": b64(b"x")}}, "aren't allowed"),
     ],
 )
 def test_bad_requests_are_refused_before_any_github_call(gh, api, extra, detail):
