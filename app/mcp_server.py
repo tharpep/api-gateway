@@ -535,7 +535,8 @@ async def _sazed(method: str, path: str, body: dict | None = None) -> Any:
             method,
             f"{settings.sazed_url.rstrip('/')}{path}",
             json=body,
-            headers={"X-API-Key": settings.sazed_api_key},
+            # pinned by test_every_sazed_call_asks_for_shape_2
+            headers={"X-API-Key": settings.sazed_api_key, "X-Sazed-Shape": "2"},
             timeout=40.0,
         )
     except httpx.HTTPError as e:
@@ -846,7 +847,9 @@ async def board_project(
     and latest update, and each step's id, title, position, status and card counts with each
     card's id, title, stage and rank; it omits what happens next, PRs, CI, jobs, repos, plan links,
     effort, impact, step summaries and dispatch runs. full returns everything, or use
-    board_card for one card. Read-only."""
+    board_card for one card. In full, each dispatch run counts its tasks by state (how the run
+    ended: running, needs_input, succeeded, failed, timed_out, cancelled, skipped) in states, and
+    by phase (dispatch's own word, such as landed or conflict) in phases. Read-only."""
     data = await _sazed("GET", f"/board/projects/{slug}")
     if detail == "full":
         return data
@@ -1150,60 +1153,87 @@ async def plan_update(
 
 @mcp.tool(annotations=_READ)
 async def profile_list() -> list[dict[str, Any]]:
-    """Dispatch agent profiles from Sazed's registry: model, effort, budget, timeout, whether the
-    task may write, and whether it must read evidence. Dispatch reads these when a plan runs; the
-    rule is the cheapest model whose check catches its mistakes. Read-only."""
+    """Every agent profile in Sazed's registry, for dispatch tasks and worker jobs: engine,
+    capability, model, effort, budget, timeout, tool-call cap, and whether it must read evidence.
+    engine: which harness runs the agent, claude or agy.
+    capability: what the run may do, research, review, change or browse; only change edits files.
+    A null effort means no effort flag; a null budget or max_tool_calls means no cap. The rule is
+    the cheapest model whose check catches its mistakes. Read-only."""
     return await _sazed("GET", "/agents/profiles")
 
 
 @mcp.tool(annotations=_READ)
 async def profile_read(name: str) -> dict[str, Any]:
-    """One agent profile with its version history (who changed it, why, and the values)."""
+    """One agent profile, with the same fields as profile_list, and its version history (who
+    changed it, why, and the values)."""
     return await _sazed("GET", f"/agents/profiles/{name}")
+
+
+_PROFILE_FIELDS = (
+    "engine",
+    "capability",
+    "model",
+    "effort",
+    "budget_usd",
+    "timeout_s",
+    "max_tool_calls",
+    "evidence_required",
+    "description",
+    "mcp",
+)
 
 
 @mcp.tool(annotations=_WRITE)
 async def profile_save(
     name: str,
-    model: str,
-    effort: Literal["low", "medium", "high", "xhigh", "max"],
-    budget_usd: float,
-    timeout_s: int,
-    read_only: bool,
     reason: str,
-    evidence_required: bool = False,
-    description: str = "",
+    engine: Literal["claude", "agy"] | None = None,
+    capability: Literal["research", "review", "change", "browse"] | None = None,
+    model: str | None = None,
+    effort: Literal["low", "medium", "high", "xhigh", "max", "none"] | None = None,
+    budget_usd: float | Literal["none"] | None = None,
+    timeout_s: int | None = None,
+    max_tool_calls: int | Literal["none"] | None = None,
+    evidence_required: bool | None = None,
+    description: str | None = None,
     expected_version: int | None = None,
     mcp: dict[str, list[str]] | None = None,
     agent: str = "claude",
 ) -> dict[str, Any]:
-    """Create or change an agent profile. model is an alias (haiku, sonnet, opus) or a full
-    claude- id. Give a one-line reason (what changed and why) and, when editing, the version you
-    read, so a newer change isn't overwritten. Every save is kept in the profile's history.
-    mcp grants MCP servers from the registry (mcp_server_list) as {server: [tool, ...]}, or
-    {server: ["*"]} for every tool; agents get no MCP servers unless granted. Leave mcp out to
-    keep the profile's current grants."""
-    if mcp is None:
-        try:
-            mcp = (await _sazed("GET", f"/agents/profiles/{name}")).get("mcp")
-        except ToolError:
-            mcp = None
-    body = {
+    """Create or change an agent profile. Send only what changes: fields left out keep the
+    profile's current values. A new profile needs model, timeout_s and capability.
+    engine: which harness runs the agent, claude (default) or agy.
+    capability: what the run may do, research, review, change or browse; only change edits files.
+    model is a claude alias (haiku, sonnet, opus, fable) or claude- id for engine claude, and a
+    gemini- id for agy. "none" clears effort (no effort flag), budget_usd or max_tool_calls (no
+    cap). A job profile's capability can't change. Give a one-line reason (what changed and why)
+    and the version you read, so a newer change isn't overwritten. mcp grants servers from
+    mcp_server_list as {server: [tool, ...]} or {server: ["*"]}."""
+    profiles = await _sazed("GET", "/agents/profiles")
+    current = next((p for p in profiles if p["name"] == name), None)
+    given = {
+        "engine": engine,
+        "capability": capability,
         "model": model,
         "effort": effort,
         "budget_usd": budget_usd,
         "timeout_s": timeout_s,
-        "read_only": read_only,
+        "max_tool_calls": max_tool_calls,
         "evidence_required": evidence_required,
         "description": description,
-        "author": f"agent:{agent}",
-        "reason": reason,
-        "expected_version": expected_version,
         "mcp": mcp,
     }
-    return await _sazed(
-        "PUT", f"/agents/profiles/{name}", {k: v for k, v in body.items() if v is not None}
-    )
+    fields = {k: current[k] for k in _PROFILE_FIELDS} if current else {}
+    fields.update({k: None if v == "none" else v for k, v in given.items() if v is not None})
+    body = {
+        **fields,
+        "author": f"agent:{agent}",
+        "reason": reason,
+        "expected_version": expected_version or (current["version"] if current else None),
+    }
+    if current is None:
+        body = {k: v for k, v in body.items() if v is not None}
+    return await _sazed("PUT", f"/agents/profiles/{name}", body)
 
 
 @mcp.tool(annotations=_READ)
