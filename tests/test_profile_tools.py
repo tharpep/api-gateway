@@ -62,6 +62,12 @@ def test_none_clears_a_cap(sent):
     assert sent[-1][2]["max_tool_calls"] is None
 
 
+def test_none_is_plain_text_outside_the_caps(sent):
+    """Only effort, budget_usd and max_tool_calls read the word none as a clear."""
+    _save(name="review", description="none")
+    assert sent[-1][2]["description"] == "none"
+
+
 def test_new_profile_sends_only_what_was_given(sent):
     """A new profile has no row to merge, so nothing is invented for it."""
     _save(

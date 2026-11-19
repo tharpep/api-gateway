@@ -848,7 +848,8 @@ async def board_project(
     card's id, title, stage and rank; it omits what happens next, PRs, CI, jobs, repos, plan links,
     effort, impact, step summaries and dispatch runs. full returns everything, or use
     board_card for one card. In full, each dispatch run counts its tasks by state (how the run
-    ended: running, needs_input, succeeded, failed, timed_out, cancelled, skipped) in states, and
+    ended: planned for a task with no rows yet, running, needs_input, succeeded, failed,
+    timed_out, cancelled, skipped) in states, and
     by phase (dispatch's own word, such as landed or conflict) in phases. Read-only."""
     data = await _sazed("GET", f"/board/projects/{slug}")
     if detail == "full":
@@ -1206,8 +1207,9 @@ async def profile_save(
     capability: what the run may do, research, review, change or browse; only change edits files.
     model is a claude alias (haiku, sonnet, opus, fable) or claude- id for engine claude, and a
     gemini- id for agy. "none" clears effort (no effort flag), budget_usd or max_tool_calls (no
-    cap). A job profile's capability can't change. Give a one-line reason (what changed and why)
-    and the version you read, so a newer change isn't overwritten. mcp grants servers from
+    cap). A job profile's capability can't change. Give a one-line reason (what changed and why).
+    Pass expected_version from profile_read to guard an edit; without it, only a save landing
+    during this call is caught, not one made since you read the profile. mcp grants servers from
     mcp_server_list as {server: [tool, ...]} or {server: ["*"]}."""
     profiles = await _sazed("GET", "/agents/profiles")
     current = next((p for p in profiles if p["name"] == name), None)
@@ -1224,7 +1226,10 @@ async def profile_save(
         "mcp": mcp,
     }
     fields = {k: current[k] for k in _PROFILE_FIELDS} if current else {}
-    fields.update({k: None if v == "none" else v for k, v in given.items() if v is not None})
+    fields.update({k: v for k, v in given.items() if v is not None})
+    for k in ("effort", "budget_usd", "max_tool_calls"):
+        if fields.get(k) == "none":
+            fields[k] = None
     body = {
         **fields,
         "author": f"agent:{agent}",
