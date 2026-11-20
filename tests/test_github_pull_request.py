@@ -468,8 +468,21 @@ def test_re_export_after_update_branch_with_an_older_base_sha_is_refused(gh, api
     resp = api.post("/github/app/pull-request", json=export(base_sha=gh.root))
     assert resp.status_code == 409
     assert "newer than base_sha" in resp.json()["detail"]
+    assert "not reopening it" not in resp.json()["detail"]
     assert writes(gh) == []
     assert gh.refs["sazed/job-1"] == merged_head
+
+
+def test_closed_pr_409_says_not_reopening_it(gh, api):
+    """Sazed tells the closed-PR 409 from the re-export 409 by the phrase "not reopening it"."""
+    api.post("/github/app/pull-request", json=request())
+    gh.pulls[0]["state"] = "closed"
+    gh.calls.clear()
+
+    resp = api.post("/github/app/pull-request", json=request(pr_number=1))
+    assert resp.status_code == 409
+    assert "not reopening it" in resp.json()["detail"]
+    assert writes(gh) == []
 
 
 def test_re_export_with_a_newer_base_sha_adds_it_as_a_second_parent(gh, api):
