@@ -97,3 +97,25 @@ jobs:
       - name: Tests (when the repo has them)
         run: |
           if [ -d tests ]; then poetry run pytest -q; else echo "No tests/ yet."; fi
+
+      # tests/card_schemas.json is a copy of sazed-frontend's generated file; the contract test
+      # only proves the gateway against this copy. When the fetch fails, the diff step shows as
+      # skipped with a warning, never as a pass.
+      - name: Fetch sazed-frontend's card schemas
+        id: card_schemas
+        run: |
+          url=https://raw.githubusercontent.com/tharpep/sazed-frontend/main/src/cards/card-schemas.json
+          if curl -fsSL --retry 2 -o "$RUNNER_TEMP/card-schemas.json" "$url"; then
+            echo "fetched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Card schema drift check skipped::Could not fetch $url, so tests/card_schemas.json was not compared with sazed-frontend main."
+            echo "fetched=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Card schemas match sazed-frontend main
+        if: steps.card_schemas.outputs.fetched == 'true'
+        run: |
+          if ! diff -u --strip-trailing-cr "$RUNNER_TEMP/card-schemas.json" tests/card_schemas.json; then
+            echo "::error file=tests/card_schemas.json::Differs from sazed-frontend main. Copy src/cards/card-schemas.json from sazed-frontend main over it, then rerun the tests."
+            exit 1
+          fi
