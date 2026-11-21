@@ -246,12 +246,46 @@ def test_every_card_tool_has_a_sample_and_a_schema():
 def test_tool_output_matches_its_card_schema(tool, args):
     """The structured result of a card tool validates against that card's JSON Schema."""
     structured = asyncio.run(mcp.call_tool(tool, args)).structuredContent
-    schema = SCHEMAS[_card_tools()[tool]]
-    errors = [
+    assert _schema_errors(_card_tools()[tool], structured) == []
+
+
+def _schema_errors(widget: str, structured: dict) -> list[str]:
+    return [
         f"{'.'.join(map(str, e.absolute_path)) or 'props'}: {e.message}"
-        for e in Draft202012Validator(schema).iter_errors(structured)
+        for e in Draft202012Validator(SCHEMAS[widget]).iter_errors(structured)
     ]
-    assert errors == []
+
+
+def test_full_project_list_is_bounded(monkeypatch):
+    """Past 100,000 characters, the top-ranked active projects stay full and the rest become
+    briefs, with a note; the mixed list still validates against the card schema."""
+    board = [
+        {**_project(cards=False), "slug": f"p{i}", "rank": i, "summary": "x" * 4000}
+        for i in range(1, 41)
+    ]
+    board[0]["state"] = "paused"
+
+    async def sazed(method, path, body=None):
+        return {"projects": board}
+
+    monkeypatch.setattr(mcp_server, "_sazed", sazed)
+    result = asyncio.run(mcp.call_tool("board_projects", {"detail": "full"}))
+    out = result.structuredContent
+    assert len(result.content[0].text) * 2 <= 100_000
+    full = [p["slug"] for p in out["projects"] if "workstreams" in p]
+    shortened = [p["slug"] for p in out["projects"] if "steps" in p]
+    assert full == [f"p{i}" for i in range(2, 2 + len(full))]
+    assert "p1" in shortened
+    assert len(full) + len(shortened) == 40
+    assert out["truncated"].startswith(f"{len(shortened)} of 40 projects")
+    assert "board_project" in out["truncated"]
+    assert _schema_errors("ProjectsWidget", out) == []
+
+
+def test_small_full_project_list_is_untouched():
+    """Under the bound, detail=full returns Sazed's list as it is, with no note."""
+    out = asyncio.run(mcp.call_tool("board_projects", {"detail": "full"})).structuredContent
+    assert out == SAZED["/board/projects"]
 
 
 @pytest.mark.parametrize("tool", list(SAMPLES))

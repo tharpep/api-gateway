@@ -425,13 +425,13 @@
   },
   "ProjectsWidget": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "anyOf": [
-      {
-        "type": "object",
-        "properties": {
-          "projects": {
-            "type": "array",
-            "items": {
+    "type": "object",
+    "properties": {
+      "projects": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
               "type": "object",
               "properties": {
                 "id": {
@@ -1105,19 +1105,8 @@
                 "current",
                 "workstreams"
               ]
-            }
-          }
-        },
-        "required": [
-          "projects"
-        ]
-      },
-      {
-        "type": "object",
-        "properties": {
-          "projects": {
-            "type": "array",
-            "items": {
+            },
+            {
               "type": "object",
               "properties": {
                 "slug": {
@@ -1248,6 +1237,9 @@
                       "progress"
                     ]
                   }
+                },
+                "workstreams": {
+                  "not": {}
                 }
               },
               "required": [
@@ -1260,12 +1252,12 @@
                 "steps"
               ]
             }
-          }
-        },
-        "required": [
-          "projects"
-        ]
+          ]
+        }
       }
+    },
+    "required": [
+      "projects"
     ]
   },
   "ProjectWidget": {
@@ -2077,6 +2069,9 @@
                 "progress"
               ]
             }
+          },
+          "workstreams": {
+            "not": {}
           }
         },
         "required": [
