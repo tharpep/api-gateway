@@ -24,7 +24,7 @@ ruff check app/
 ruff format app/
 ```
 
-Tests: `poetry run pytest -q`. `tests/test_mcp_tools.py` pins the MCP tool names and annotations, so adding or renaming a tool means editing it.
+Tests: `poetry run pytest -q`. `tests/test_mcp_tools.py` pins the MCP tool names and annotations, so adding or renaming a tool means editing it. `tests/test_card_contract.py` checks every tool that draws a card against `tests/card_schemas.json`, a copy of sazed-frontend's `src/cards/card-schemas.json`; copy it over whenever the frontend regenerates it.
 
 ## Architecture
 

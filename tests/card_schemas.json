@@ -1,0 +1,2094 @@
+{
+  "HomelabWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "object",
+        "properties": {
+          "up": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "down": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "unknown": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "up",
+          "down",
+          "unknown"
+        ]
+      },
+      "services": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "up": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "in_maintenance": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ]
+        }
+      }
+    },
+    "required": [
+      "summary",
+      "services"
+    ]
+  },
+  "CalendarWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "events": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "start": {
+              "type": "string",
+              "description": "ISO 8601 start time"
+            },
+            "end": {
+              "type": "string",
+              "description": "ISO 8601 end time"
+            },
+            "all_day": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "start",
+            "end",
+            "all_day"
+          ]
+        }
+      }
+    },
+    "required": [
+      "events"
+    ]
+  },
+  "StorageWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "pools": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "total_bytes": {
+              "type": "number"
+            },
+            "free_bytes": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "name",
+            "total_bytes",
+            "free_bytes"
+          ]
+        }
+      },
+      "media": {
+        "type": "object",
+        "properties": {
+          "free_bytes": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "downloads": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "not_imported": {
+                    "type": "object",
+                    "properties": {
+                      "count": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "count"
+                    ]
+                  }
+                },
+                "required": [
+                  "not_imported"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "required": [
+      "pools",
+      "media"
+    ]
+  },
+  "ContainerWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "vmid": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      },
+      "name": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string"
+      },
+      "cpu_percent": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "mem_used_bytes": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "mem_total_bytes": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "disk_used_bytes": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "disk_total_bytes": {
+        "type": [
+          "number",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "vmid",
+      "name",
+      "status"
+    ]
+  },
+  "JobWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "pr_url": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "ci_state": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "question": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "error": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "status",
+      "kind"
+    ]
+  },
+  "JobsWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "jobs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "job_id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "job_id",
+            "status"
+          ]
+        }
+      }
+    },
+    "required": [
+      "jobs"
+    ]
+  },
+  "InfoCard": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string"
+      },
+      "subtitle": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "stats": {
+        "description": "Up to 4 headline numbers",
+        "anyOf": [
+          {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "tone": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "normal",
+                        "attention",
+                        "problem"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "label",
+                "value"
+              ]
+            }
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "rows": {
+        "description": "Up to 6 rows",
+        "anyOf": [
+          {
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tone": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "normal",
+                        "attention",
+                        "problem"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "label"
+              ]
+            }
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "note": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "title"
+    ]
+  },
+  "ProjectsWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": {
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "slug": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "active",
+                    "paused",
+                    "done",
+                    "dropped"
+                  ]
+                },
+                "rank": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "repos": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "plan": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "latest_update": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "latest_update_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": "string"
+                },
+                "headline": {
+                  "type": "string",
+                  "description": "Plain line for when latest_update is null"
+                },
+                "progress": {
+                  "type": "object",
+                  "properties": {
+                    "done": {
+                      "type": "number"
+                    },
+                    "in_flight": {
+                      "type": "number"
+                    },
+                    "needs_me": {
+                      "type": "number"
+                    },
+                    "next": {
+                      "type": "number"
+                    },
+                    "total": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "done",
+                    "in_flight",
+                    "needs_me",
+                    "next",
+                    "total"
+                  ]
+                },
+                "bar": {
+                  "type": "object",
+                  "properties": {
+                    "done": {
+                      "type": "number"
+                    },
+                    "in_flight": {
+                      "type": "number"
+                    },
+                    "needs_me": {
+                      "type": "number"
+                    },
+                    "next": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "done",
+                    "in_flight",
+                    "needs_me",
+                    "next"
+                  ]
+                },
+                "steps_done": {
+                  "type": "number"
+                },
+                "steps_total": {
+                  "type": "number"
+                },
+                "current": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "done",
+                            "dropped",
+                            "needs_me",
+                            "in_flight",
+                            "blocked",
+                            "next",
+                            "planned"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "status"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "workstreams": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "summary": {
+                        "type": "string"
+                      },
+                      "position": {
+                        "type": "number"
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "open",
+                          "done",
+                          "dropped"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "done",
+                          "dropped",
+                          "needs_me",
+                          "in_flight",
+                          "blocked",
+                          "next",
+                          "planned"
+                        ]
+                      },
+                      "depends_on": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "progress": {
+                        "type": "object",
+                        "properties": {
+                          "done": {
+                            "type": "number"
+                          },
+                          "in_flight": {
+                            "type": "number"
+                          },
+                          "needs_me": {
+                            "type": "number"
+                          },
+                          "next": {
+                            "type": "number"
+                          },
+                          "total": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "done",
+                          "in_flight",
+                          "needs_me",
+                          "next",
+                          "total"
+                        ]
+                      },
+                      "bar": {
+                        "type": "object",
+                        "properties": {
+                          "done": {
+                            "type": "number"
+                          },
+                          "in_flight": {
+                            "type": "number"
+                          },
+                          "needs_me": {
+                            "type": "number"
+                          },
+                          "next": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "done",
+                          "in_flight",
+                          "needs_me",
+                          "next"
+                        ]
+                      },
+                      "cards": {
+                        "description": "Present when one project is fetched, absent in the list",
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "item",
+                                "job"
+                              ]
+                            },
+                            "source": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "stage": {
+                              "type": "string",
+                              "enum": [
+                                "inbox",
+                                "next",
+                                "doing",
+                                "needs_me",
+                                "done"
+                              ]
+                            },
+                            "next": {
+                              "type": "string"
+                            },
+                            "updated_at": {
+                              "type": "string"
+                            },
+                            "done_at": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "session_link": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "session": {
+                                      "type": "string"
+                                    },
+                                    "branch": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "pr_repo": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "pr_number": {
+                                      "type": [
+                                        "number",
+                                        "null"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "session",
+                                    "branch",
+                                    "pr_repo",
+                                    "pr_number"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "pr": {
+                              "description": "Sazed's last snapshot of the card's PR; absent from older payloads",
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "repo": {
+                                      "type": "string"
+                                    },
+                                    "number": {
+                                      "type": "number"
+                                    },
+                                    "url": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string",
+                                      "description": "open, draft, merged or closed"
+                                    },
+                                    "checks": {
+                                      "anyOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "state": {
+                                              "type": "string",
+                                              "description": "passing, failing, running or none"
+                                            },
+                                            "passed": {
+                                              "type": "number"
+                                            },
+                                            "total": {
+                                              "type": "number"
+                                            },
+                                            "runs": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "name": {
+                                                    "type": "string"
+                                                  },
+                                                  "conclusion": {
+                                                    "type": [
+                                                      "string",
+                                                      "null"
+                                                    ]
+                                                  }
+                                                },
+                                                "required": [
+                                                  "name",
+                                                  "conclusion"
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "state",
+                                            "passed",
+                                            "total",
+                                            "runs"
+                                          ]
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "review": {
+                                      "anyOf": [
+                                        {
+                                          "type": "object",
+                                          "properties": {
+                                            "verdict": {
+                                              "type": "string",
+                                              "description": "approve, approve_with_nits or request_changes"
+                                            },
+                                            "source": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "url": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "verdict",
+                                            "source",
+                                            "url"
+                                          ]
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "additions": {
+                                      "type": [
+                                        "number",
+                                        "null"
+                                      ]
+                                    },
+                                    "deletions": {
+                                      "type": [
+                                        "number",
+                                        "null"
+                                      ]
+                                    },
+                                    "merged_at": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "fetched_at": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "repo",
+                                    "number",
+                                    "url",
+                                    "state",
+                                    "checks",
+                                    "review",
+                                    "additions",
+                                    "deletions",
+                                    "merged_at",
+                                    "fetched_at"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "repo": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "item_type": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "effort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "impact": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "rank": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "workstream_id": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "actions": {
+                              "type": "array",
+                              "items": {}
+                            },
+                            "job_id": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "job_status": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "ci_state": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "fix_count": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "pr_number": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "pr_url": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "pr_draft": {
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            },
+                            "plan_id": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "plan_section": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "plan_version": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "source",
+                            "title",
+                            "stage",
+                            "next",
+                            "updated_at",
+                            "repo",
+                            "item_type",
+                            "effort",
+                            "impact",
+                            "rank",
+                            "workstream_id",
+                            "actions",
+                            "job_id",
+                            "job_status",
+                            "ci_state",
+                            "fix_count",
+                            "pr_number",
+                            "pr_url",
+                            "pr_draft",
+                            "plan_id",
+                            "plan_section",
+                            "plan_version"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "summary",
+                      "position",
+                      "state",
+                      "status",
+                      "depends_on",
+                      "progress",
+                      "bar"
+                    ]
+                  }
+                },
+                "dispatch_runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "plan": {
+                        "type": "string"
+                      },
+                      "updated_at": {
+                        "type": "string"
+                      },
+                      "tasks_total": {
+                        "type": "number"
+                      },
+                      "states": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "number"
+                        }
+                      },
+                      "phases": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "required": [
+                      "plan",
+                      "updated_at",
+                      "tasks_total",
+                      "states"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "slug",
+                "title",
+                "summary",
+                "state",
+                "rank",
+                "repos",
+                "plan",
+                "latest_update",
+                "latest_update_at",
+                "updated_at",
+                "headline",
+                "progress",
+                "bar",
+                "steps_done",
+                "steps_total",
+                "current",
+                "workstreams"
+              ]
+            }
+          }
+        },
+        "required": [
+          "projects"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "active",
+                    "paused",
+                    "done",
+                    "dropped"
+                  ]
+                },
+                "rank": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "headline": {
+                  "type": "string"
+                },
+                "latest_update": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "position": {
+                        "type": "number"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "done",
+                          "dropped",
+                          "needs_me",
+                          "in_flight",
+                          "blocked",
+                          "next",
+                          "planned"
+                        ]
+                      },
+                      "progress": {
+                        "type": "object",
+                        "properties": {
+                          "done": {
+                            "type": "number"
+                          },
+                          "in_flight": {
+                            "type": "number"
+                          },
+                          "needs_me": {
+                            "type": "number"
+                          },
+                          "next": {
+                            "type": "number"
+                          },
+                          "total": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "done",
+                          "in_flight",
+                          "needs_me",
+                          "next",
+                          "total"
+                        ]
+                      },
+                      "cards": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "stage": {
+                              "type": "string",
+                              "enum": [
+                                "inbox",
+                                "next",
+                                "doing",
+                                "needs_me",
+                                "done"
+                              ]
+                            },
+                            "rank": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "title",
+                            "stage",
+                            "rank"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "position",
+                      "status",
+                      "progress"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "slug",
+                "title",
+                "state",
+                "rank",
+                "headline",
+                "latest_update",
+                "steps"
+              ]
+            }
+          }
+        },
+        "required": [
+          "projects"
+        ]
+      }
+    ]
+  },
+  "ProjectWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused",
+              "done",
+              "dropped"
+            ]
+          },
+          "rank": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "plan": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latest_update": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latest_update_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "headline": {
+            "type": "string",
+            "description": "Plain line for when latest_update is null"
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "done": {
+                "type": "number"
+              },
+              "in_flight": {
+                "type": "number"
+              },
+              "needs_me": {
+                "type": "number"
+              },
+              "next": {
+                "type": "number"
+              },
+              "total": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "done",
+              "in_flight",
+              "needs_me",
+              "next",
+              "total"
+            ]
+          },
+          "bar": {
+            "type": "object",
+            "properties": {
+              "done": {
+                "type": "number"
+              },
+              "in_flight": {
+                "type": "number"
+              },
+              "needs_me": {
+                "type": "number"
+              },
+              "next": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "done",
+              "in_flight",
+              "needs_me",
+              "next"
+            ]
+          },
+          "steps_done": {
+            "type": "number"
+          },
+          "steps_total": {
+            "type": "number"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "done",
+                      "dropped",
+                      "needs_me",
+                      "in_flight",
+                      "blocked",
+                      "next",
+                      "planned"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "status"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workstreams": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "position": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "done",
+                    "dropped"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "done",
+                    "dropped",
+                    "needs_me",
+                    "in_flight",
+                    "blocked",
+                    "next",
+                    "planned"
+                  ]
+                },
+                "depends_on": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "progress": {
+                  "type": "object",
+                  "properties": {
+                    "done": {
+                      "type": "number"
+                    },
+                    "in_flight": {
+                      "type": "number"
+                    },
+                    "needs_me": {
+                      "type": "number"
+                    },
+                    "next": {
+                      "type": "number"
+                    },
+                    "total": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "done",
+                    "in_flight",
+                    "needs_me",
+                    "next",
+                    "total"
+                  ]
+                },
+                "bar": {
+                  "type": "object",
+                  "properties": {
+                    "done": {
+                      "type": "number"
+                    },
+                    "in_flight": {
+                      "type": "number"
+                    },
+                    "needs_me": {
+                      "type": "number"
+                    },
+                    "next": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "done",
+                    "in_flight",
+                    "needs_me",
+                    "next"
+                  ]
+                },
+                "cards": {
+                  "description": "Present when one project is fetched, absent in the list",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "item",
+                          "job"
+                        ]
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "stage": {
+                        "type": "string",
+                        "enum": [
+                          "inbox",
+                          "next",
+                          "doing",
+                          "needs_me",
+                          "done"
+                        ]
+                      },
+                      "next": {
+                        "type": "string"
+                      },
+                      "updated_at": {
+                        "type": "string"
+                      },
+                      "done_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "session_link": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "session": {
+                                "type": "string"
+                              },
+                              "branch": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "pr_repo": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "pr_number": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "session",
+                              "branch",
+                              "pr_repo",
+                              "pr_number"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "pr": {
+                        "description": "Sazed's last snapshot of the card's PR; absent from older payloads",
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "repo": {
+                                "type": "string"
+                              },
+                              "number": {
+                                "type": "number"
+                              },
+                              "url": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string",
+                                "description": "open, draft, merged or closed"
+                              },
+                              "checks": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "description": "passing, failing, running or none"
+                                      },
+                                      "passed": {
+                                        "type": "number"
+                                      },
+                                      "total": {
+                                        "type": "number"
+                                      },
+                                      "runs": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "type": "string"
+                                            },
+                                            "conclusion": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "conclusion"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "passed",
+                                      "total",
+                                      "runs"
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "review": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "description": "approve, approve_with_nits or request_changes"
+                                      },
+                                      "source": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "url": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "source",
+                                      "url"
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "additions": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "deletions": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "merged_at": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "fetched_at": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "repo",
+                              "number",
+                              "url",
+                              "state",
+                              "checks",
+                              "review",
+                              "additions",
+                              "deletions",
+                              "merged_at",
+                              "fetched_at"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "repo": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "item_type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "effort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "impact": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "rank": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "workstream_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "actions": {
+                        "type": "array",
+                        "items": {}
+                      },
+                      "job_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "job_status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "ci_state": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "fix_count": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "pr_number": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "pr_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "pr_draft": {
+                        "type": [
+                          "boolean",
+                          "null"
+                        ]
+                      },
+                      "plan_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "plan_section": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "plan_version": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "source",
+                      "title",
+                      "stage",
+                      "next",
+                      "updated_at",
+                      "repo",
+                      "item_type",
+                      "effort",
+                      "impact",
+                      "rank",
+                      "workstream_id",
+                      "actions",
+                      "job_id",
+                      "job_status",
+                      "ci_state",
+                      "fix_count",
+                      "pr_number",
+                      "pr_url",
+                      "pr_draft",
+                      "plan_id",
+                      "plan_section",
+                      "plan_version"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "summary",
+                "position",
+                "state",
+                "status",
+                "depends_on",
+                "progress",
+                "bar"
+              ]
+            }
+          },
+          "dispatch_runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "plan": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                },
+                "tasks_total": {
+                  "type": "number"
+                },
+                "states": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                },
+                "phases": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "required": [
+                "plan",
+                "updated_at",
+                "tasks_total",
+                "states"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "summary",
+          "state",
+          "rank",
+          "repos",
+          "plan",
+          "latest_update",
+          "latest_update_at",
+          "updated_at",
+          "headline",
+          "progress",
+          "bar",
+          "steps_done",
+          "steps_total",
+          "current",
+          "workstreams"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused",
+              "done",
+              "dropped"
+            ]
+          },
+          "rank": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "headline": {
+            "type": "string"
+          },
+          "latest_update": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "position": {
+                  "type": "number"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "done",
+                    "dropped",
+                    "needs_me",
+                    "in_flight",
+                    "blocked",
+                    "next",
+                    "planned"
+                  ]
+                },
+                "progress": {
+                  "type": "object",
+                  "properties": {
+                    "done": {
+                      "type": "number"
+                    },
+                    "in_flight": {
+                      "type": "number"
+                    },
+                    "needs_me": {
+                      "type": "number"
+                    },
+                    "next": {
+                      "type": "number"
+                    },
+                    "total": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "done",
+                    "in_flight",
+                    "needs_me",
+                    "next",
+                    "total"
+                  ]
+                },
+                "cards": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "stage": {
+                        "type": "string",
+                        "enum": [
+                          "inbox",
+                          "next",
+                          "doing",
+                          "needs_me",
+                          "done"
+                        ]
+                      },
+                      "rank": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "stage",
+                      "rank"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "position",
+                "status",
+                "progress"
+              ]
+            }
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "state",
+          "rank",
+          "headline",
+          "latest_update",
+          "steps"
+        ]
+      }
+    ]
+  }
+}
