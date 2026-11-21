@@ -8,18 +8,20 @@ gateway key; direct LAN callers must send the key themselves.
 
 import asyncio
 import functools
+import json
 import time
 from datetime import date
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
+import pydantic_core
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
-from pydantic import BaseModel
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from pydantic import BaseModel, Field
 
 from app import activity
 from app.config import settings
@@ -89,6 +91,8 @@ _mcp_tool = mcp.tool
 def _recorded_tool(*dargs, **dkwargs):
     """mcp.tool(), plus an activity record per call (name, args, outcome, duration)."""
 
+    draws_card = "ui" in (dkwargs.get("meta") or {})
+
     def decorate(fn):
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
@@ -109,12 +113,33 @@ def _recorded_tool(*dargs, **dkwargs):
                     int((time.perf_counter() - t0) * 1000),
                 )
 
-        return _mcp_tool(*dargs, **dkwargs)(wrapper)
+        # Only the MCP layer gets the compacted result; Python callers keep the plain dict.
+        @functools.wraps(fn)
+        async def compacted(*args, **kwargs):
+            return _compact_result(await wrapper(*args, **kwargs))
+
+        _mcp_tool(*dargs, **dkwargs)(compacted if draws_card else wrapper)
+        return wrapper
 
     return decorate
 
 
 mcp.tool = _recorded_tool  # type: ignore[method-assign]
+
+
+def _compact_result(result: dict[str, Any]) -> CallToolResult:
+    """A card tool's result with its text copy as compact JSON.
+
+    FastMCP sends a dict twice: as structuredContent and as JSON text indented by 2 in content.
+    The indent made the full project list 96 KB of text on top of 60 KB of structured data, so
+    the whole result passed the ~150,000 characters above which Claude stores a tool result as a
+    file and the card never hydrates. Both copies keep every field: Claude Code's model reads
+    structuredContent, and hosts that draw the card give their model the content text.
+    Pinned by test_card_text_is_compact_json_of_the_structured_result."""
+    text = pydantic_core.to_json(result, fallback=str).decode()
+    return CallToolResult(
+        content=[TextContent(type="text", text=text)], structuredContent=json.loads(text)
+    )
 
 
 def _detail_text(detail: Any, existing: dict | None = None) -> str:
@@ -278,8 +303,9 @@ class CardRow(BaseModel):
 async def show_card(
     title: str,
     subtitle: str | None = None,
-    stats: list[CardStat] | None = None,
-    rows: list[CardRow] | None = None,
+    # The card's Zod schema rejects longer lists, so refuse them here where the model sees why.
+    stats: Annotated[list[CardStat], Field(max_length=4)] | None = None,
+    rows: Annotated[list[CardRow], Field(max_length=6)] | None = None,
     note: str | None = None,
 ) -> dict[str, Any]:
     """Draw a short summary card in the chat, for a few numbers or rows that read better as a
