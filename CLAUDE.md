@@ -91,6 +91,11 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
   - `GET /journal/summary` — entries grouped by date with stats; takes `category`, `subcategory`, `period` (`week` | `month` | `last_week` | `last_month`), or explicit date range
   - `GET /journal/export` — markdown or plain text export with the same filters as `/summary`
 
+- `vault.py` — capture and list notes through the vault service on CT 109 (`VAULT_URL`; reads use `VAULT_API_KEY`).
+  - `POST /vault/capture` — writes a note into the vault's `inbox/`; needs `VAULT_CAPTURE_KEY`, a separate key from `VAULT_API_KEY`.
+  - `GET /vault/notes` — list notes; filters `folder` (`inbox` | `notes` | `claude`, repeatable), `q`, `limit`, `offset`.
+  - Capture is REST-only: no MCP tool wraps it, so no agent tool can write into the vault's `inbox/`.
+
 - `homelab.py` — Proxmox host and container status plus power actions (requires `PROXMOX_HOST`, `PROXMOX_READ_TOKEN`; actions need `PROXMOX_POWER_TOKEN`; `PROXMOX_CA_CERT` points at `pve-root-ca.pem`). Uses its own httpx client because Proxmox has its own CA. Which containers can be started/restarted is decided by the power token's Proxmox ACLs, not by this service; a Proxmox 403 is returned as 403.
   - `GET /homelab/host` — CPU, memory, root disk, uptime, storage pools
   - `GET /homelab/storage` — where disk space goes (`app/homelab_storage.py`): free space per Proxmox pool; "free for media" = the pool behind CT `MEDIA_VMID`'s `MEDIA_MOUNT` (df inside a container shows its thin volume, not the shared pool, so it overstates); series/movie counts and sizes from Sonarr/Radarr; torrent count and size from qBittorrent, plus the count and size of finished ones Sonarr/Radarr never imported (history by `downloadId`); each container's root disk. Never titles or torrent names (Pryce's choice: what he watches stays off the console and out of MCP). Each source (`SONARR_URL`/`_API_KEY`, `RADARR_URL`/`_API_KEY`, `QBITTORRENT_URL`) is optional and fails independently into `errors`. qBittorrent has no key: its WebUI auth-bypass whitelist includes CT 104's IP (192.168.50.63, DHCP).
