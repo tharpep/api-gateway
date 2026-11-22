@@ -338,11 +338,14 @@ async def send_to_phone(
     url_title: str | None = None,
     document: str | None = None,
     priority: Literal["quiet", "normal", "high"] = "normal",
+    ttl: int | None = None,
 ) -> dict[str, Any]:
     """Push something to Pryce's phone through Pushover.
 
     Keep `title` to a few words (it must fit one line) and `message` to a sentence or two.
-    Put a link in `url` (a tap-able button), not in the text. For anything longer, such as
+    Put a link in `url` (a tap-able button, up to 512 characters), not in the text; `url_title`
+    labels the button (up to 100). `ttl` deletes the message from the phone after that many
+    seconds: use it for FYIs that go stale (86400 is a day). For anything longer, such as
     notes, a plan or a report, pass it as `document` (markdown, up to 200k characters): it is
     stored for 30 days and the notification opens it. Never send secrets in plain text;
     Pushover is a third party. To send a local file or image, POST it with curl instead:
@@ -350,7 +353,7 @@ async def send_to_phone(
     """
     return await _call(
         notify.deliver(
-            title, message, _PHONE_PRIORITY[priority], url, url_title, document
+            title, message, _PHONE_PRIORITY[priority], url, url_title, document, ttl=ttl
         )
     )
 
