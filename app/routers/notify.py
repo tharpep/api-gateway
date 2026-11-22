@@ -5,11 +5,12 @@ import logging
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from app import activity, notices
 from app.config import settings
@@ -31,32 +32,30 @@ PUSHOVER_ATTACHMENT_MAX = 5_242_880
 # file is served as a download, so an uploaded HTML or SVG file can never run script on this
 # origin (Caddy reaches it with the gateway key injected).
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
-# Pushover's own limits (pushover.net/api).
+# Pushover's own limit (pushover.net/api). Its url_title limit (100) never binds: the button is
+# clamped to 40.
 URL_MAX = 512
-URL_TITLE_MAX = 100
 
 
 class NotificationRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=250)
     message: str = Field(..., min_length=1, max_length=1024)
     priority: Priority = Priority.NORMAL
-    url: str | None = Field(None, max_length=URL_MAX)
-    url_title: str | None = Field(None, max_length=URL_TITLE_MAX)
-    ttl: int | None = Field(None, ge=1)
-    # With a kind, its rule (app/notices.py) sets priority, ttl, url and url_title, and those
-    # fields are ignored: no sender keeps a rule of its own.
-    kind: notices.Kind | None = None
-    refs: dict[str, str] = Field(default_factory=dict, max_length=len(notices.Target))
+    # A link, label or ttl Pushover can't take loses only itself (send_pushover), never the
+    # notice, so these carry no limits here.
+    url: str | None = None
+    url_title: str | None = None
+    ttl: int | None = None
+    # A known kind's rule (app/notices.py) sets priority, ttl, url and url_title, and those
+    # fields are ignored: no sender keeps a rule of its own. An unknown kind or a bad ref is
+    # logged and the notice goes out the old way, so a Sazed that is ahead of the gateway never
+    # loses a notice.
+    kind: str | None = Field(None, max_length=100)
+    refs: dict[str, Any] = Field(default_factory=dict, max_length=50)
     document: str | None = Field(None, max_length=DOCUMENT_MAX)
     attachment_base64: str | None = Field(None, max_length=(FILE_MAX * 4) // 3 + 8)
     attachment_type: str | None = Field(None, max_length=100)
     attachment_name: str | None = Field(None, max_length=200)
-
-    @field_validator("refs")
-    @classmethod
-    def _refs(cls, refs: dict[str, str]) -> dict[str, str]:
-        notices.check_refs(refs)
-        return refs
 
 
 class NotificationResponse(BaseModel):
@@ -99,11 +98,12 @@ async def send_pushover(
     message from the phone that many seconds after Pushover receives it.
     """
     if url and len(url) > URL_MAX:
-        raise HTTPException(422, f"url over {URL_MAX} characters")
-    if url_title and len(url_title) > URL_TITLE_MAX:
-        raise HTTPException(422, f"url_title over {URL_TITLE_MAX} characters")
+        # A long CONSOLE_URL or caller URL costs the button, not the notice.
+        logger.warning("Notice %r sent without its link (%d chars)", title, len(url))
+        url = url_title = None
     if ttl is not None and ttl < 1:
-        raise HTTPException(422, "ttl must be a positive number of seconds")
+        logger.warning("Notice %r sent without its ttl (%s)", title, ttl)
+        ttl = None
     if not settings.pushover_user_key or not settings.pushover_api_token:
         raise HTTPException(
             status_code=503,
@@ -158,7 +158,7 @@ async def send_pushover(
 
 
 def apply_rule(
-    kind: notices.Kind, refs: dict[str, str]
+    kind: notices.Kind, refs: dict[str, Any]
 ) -> tuple[Priority, int | None, str, str]:
     """(priority, ttl, url, url_title) for a notice of this kind, from its rule. A bad ref only
     loses its link: an outage alert must still arrive if a service id were malformed."""
@@ -228,18 +228,21 @@ async def deliver(
     document: str | None = None,
     file: tuple[str, bytes, str] | None = None,
     ttl: int | None = None,
-    kind: notices.Kind | None = None,
-    refs: dict[str, str] | None = None,
+    kind: str | None = None,
+    refs: dict[str, Any] | None = None,
 ) -> dict:
     """Send to the phone: a plain notification, or one that links to a stored item.
 
-    With a `kind`, its rule replaces priority, ttl, url and url_title. Images Pushover can take
-    ride along as the attachment. A document, or a file Pushover can't attach, is stored and the
-    notification's button opens its page; the caller's own `url` is kept as a button on that
-    page. Shared by REST and the MCP `send_to_phone` tool.
+    With a known `kind`, its rule replaces priority, ttl, url and url_title; an unknown one is
+    logged and sent with the caller's own fields. Images Pushover can take ride along as the
+    attachment. A document, or a file Pushover can't attach, is stored and the notification's
+    button opens its page; the caller's own `url` is kept as a button on that page. Shared by
+    REST and the MCP `send_to_phone` tool.
     """
-    if kind:
-        priority, ttl, url, url_title = apply_rule(kind, refs or {})
+    if known := notices.known_kind(kind):
+        priority, ttl, url, url_title = apply_rule(known, refs or {})
+    elif kind:
+        logger.warning("Notice %r has unknown kind %r; sent without a rule", title, kind)
     attachment = None
     if file and file[2] in IMAGE_TYPES and len(file[1]) <= PUSHOVER_ATTACHMENT_MAX:
         attachment, file = file, None
@@ -290,9 +293,9 @@ async def send_file(
     title: str = Form(..., min_length=1, max_length=250),
     message: str = Form("", max_length=1024),
     priority: Priority = Form(Priority.NORMAL),
-    url: str | None = Form(None, max_length=URL_MAX),
-    url_title: str | None = Form(None, max_length=URL_TITLE_MAX),
-    ttl: int | None = Form(None, ge=1),
+    url: str | None = Form(None),
+    url_title: str | None = Form(None),
+    ttl: int | None = Form(None),
 ):
     """Multipart upload, for sending a local file: `curl -F title=... -F file=@path ...`."""
     data = await file.read(FILE_MAX + 1)

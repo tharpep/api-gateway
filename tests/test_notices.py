@@ -2,7 +2,6 @@ import asyncio
 
 import httpx
 import pytest
-from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app import alerts, notices
@@ -52,11 +51,11 @@ def test_every_kind_has_a_rule_and_none_is_emergency():
             Kind.MERGE_CALL,
             {"card": "c1", "job": "j1"},
             0,
-            None,
+            86400,
             "/?open=backlog:c1",
             "Open merge call",
         ),
-        (Kind.MERGE_CALL, {"job": "j1"}, 0, None, "/?open=job:j1", "Open merge call"),
+        (Kind.MERGE_CALL, {"job": "j1"}, 0, 86400, "/?open=job:j1", "Open merge call"),
         (Kind.RUN_FAILED, {"job": "j1"}, 0, None, "/?open=job:j1", "Open run"),
         (Kind.RUN_FAILED, {"automation": "a1"}, 0, None, "/?open=automation:a1", "Open run"),
         (Kind.STORAGE_WARNING, {}, 0, None, "/?page=system.homelab.storage", "Open storage"),
@@ -119,30 +118,83 @@ def test_rest_without_kind_passes_ttl_and_url_title_through(sent):
     )
 
 
+def _rest(**fields) -> None:
+    body = notify.NotificationRequest(title="T", message="M", **fields)
+    asyncio.run(notify.send_notification(body))
+
+
+@pytest.mark.parametrize(
+    ("refs", "url"),
+    [
+        ({"nope": "1"}, "/"),
+        ({"job": "a/b"}, "/"),
+        ({"job": "."}, "/"),
+        ({"job": ".."}, "/"),
+        ({"job": 7}, "/"),
+        ({"storage": "x"}, "/"),
+        ({"url": "javascript:alert(1)"}, "/"),
+        ({"pr": "1", "card": "c1"}, "/?open=backlog:c1"),
+    ],
+)
+def test_rest_bad_refs_lose_only_their_link(sent, refs, url):
+    """A notice is never lost to a ref the gateway can't use; the rest of its rule holds."""
+    _rest(kind="routine", refs=refs)
+    (payload,) = sent
+    assert payload["url"] == CONSOLE + url
+    assert (payload["priority"], payload["ttl"]) == (-1, 86400)
+
+
+def test_rest_unknown_kind_goes_out_the_old_way(sent):
+    """A kind Sazed knows and the gateway doesn't yet: priority 0, no ttl, the caller's link."""
+    _rest(kind="pr_reviewed", refs={"job": "j1"})
+    _rest(kind="pr_reviewed", url="https://x.test", url_title="Open")
+    bare, linked = sent
+    assert bare["priority"] == 0 and "ttl" not in bare and "url" not in bare
+    assert (linked["url"], linked["url_title"]) == ("https://x.test", "Open")
+
+
 @pytest.mark.parametrize(
     "fields",
     [
         {"ttl": 0},
+        {"ttl": -5},
         {"url": "https://x.test/" + "a" * 512},
         {"url_title": "a" * 101},
-        {"refs": {"nope": "1"}},
-        {"refs": {"job": "a/b"}},
-        {"refs": {"storage": "x"}},
-        {"refs": {"url": "javascript:alert(1)"}},
-        {"kind": "emergency"},
     ],
 )
-def test_rest_rejects_out_of_limit_fields(fields):
+def test_rest_out_of_limit_extras_are_dropped_not_the_notice(sent, fields):
+    _rest(**fields)
+    (payload,) = sent
+    assert "ttl" not in payload
+    assert "url" not in payload or len(payload["url"]) <= 512
+    assert len(payload.get("url_title", "")) <= 100
+
+
+def test_a_long_console_url_sends_the_notice_without_its_link(sent, monkeypatch):
+    monkeypatch.setattr(settings, "console_url", "https://x.test/" + "a" * 600)
+    _send(Kind.QUESTION, {"job": "j1"})
+    (payload,) = sent
+    assert "url" not in payload and "url_title" not in payload
+    assert payload["priority"] == 0
+
+
+def test_the_mcp_tool_drops_a_bad_ttl_and_long_url_not_the_notice(sent):
+    from app.mcp_server import send_to_phone
+
+    asyncio.run(send_to_phone("T", "M", url="https://x.test/" + "a" * 600, ttl=0))
+    (payload,) = sent
+    assert "url" not in payload and "ttl" not in payload
+
+
+@pytest.mark.parametrize("ref", [".", "..", "...", "a/b", "", "a" * 201])
+def test_dot_only_and_unsafe_ids_are_refused(ref):
+    with pytest.raises(ValueError):
+        notices.check_refs({"job": ref})
+
+
+def test_empty_message_is_still_rejected():
     with pytest.raises(ValidationError):
-        notify.NotificationRequest(title="T", message="M", **fields)
-
-
-def test_send_pushover_checks_limits_for_direct_callers(sent):
-    with pytest.raises(HTTPException):
-        asyncio.run(notify.send_pushover("T", "M", ttl=0))
-    with pytest.raises(HTTPException):
-        asyncio.run(notify.send_pushover("T", "M", url_title="a" * 101))
-    assert sent == []
+        notify.NotificationRequest(title="T", message="")
 
 
 def test_emergency_ignores_ttl(sent):

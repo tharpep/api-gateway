@@ -4,8 +4,10 @@ A sender names the kind and the ids it has (`refs`); the rule decides the priori
 notice clears itself (Pushover's `ttl`), the button's label and which console screen it opens.
 Senders never pass these themselves, so changing how a kind behaves is one edit here.
 
-Decisions and breakage stay until read; routine news is quiet and deletes itself after a day.
-Nothing is emergency priority: it repeats until acknowledged, and Pushover ignores `ttl` there.
+The rules follow My-AI plans/mods-widgets-2026-11-20/phone-notifications.md. Questions and
+breakage stay until read. Routine news is quiet and deletes itself after a day. A merge call rings
+like a decision but also clears after a day, so a stale "PR ready" never lingers. Nothing is
+emergency priority: it repeats until acknowledged, and Pushover ignores `ttl` there.
 """
 
 import re
@@ -74,7 +76,8 @@ _PAGE = {
 REF_TARGETS = frozenset(_OPEN_KIND) | {Target.URL}
 
 # Same rule as the console's parser, so a link the gateway builds is one the console opens.
-REF_ID = re.compile(r"^[A-Za-z0-9._-]{1,200}$")
+# Dots alone are refused: fetch resolves `.` and `..` in a path to another route.
+REF_ID = re.compile(r"^(?!\.+$)[A-Za-z0-9._-]{1,200}$")
 URL_MAX = 512
 
 
@@ -92,7 +95,7 @@ class Rule:
 RULES: dict[Kind, Rule] = {
     Kind.QUESTION: Rule(Priority.NORMAL, None, "Answer it", (Target.JOB,)),
     Kind.PERMISSION: Rule(Priority.NORMAL, None, "Review it", (Target.JOB, Target.AUTOMATION)),
-    Kind.MERGE_CALL: Rule(Priority.NORMAL, None, "Open merge call", (Target.CARD, Target.JOB)),
+    Kind.MERGE_CALL: Rule(Priority.NORMAL, DAY, "Open merge call", (Target.CARD, Target.JOB)),
     Kind.RUN_FAILED: Rule(
         Priority.NORMAL,
         None,
@@ -110,10 +113,20 @@ RULES: dict[Kind, Rule] = {
 }
 
 
-def check_refs(refs: dict[str, str]) -> dict[Target, str]:
+def known_kind(kind: str | None) -> Kind | None:
+    """The Kind for a sender's string, or None when the gateway has no rule for it yet."""
+    try:
+        return Kind(kind) if kind else None
+    except ValueError:
+        return None
+
+
+def check_refs(refs: dict[str, object]) -> dict[Target, str]:
     """Refs keyed by target, each id or URL checked. Raises ValueError on a bad one."""
     out: dict[Target, str] = {}
     for key, value in refs.items():
+        if not isinstance(value, str):
+            raise ValueError(f"ref {key!r} is not a string")
         try:
             target = Target(key)
         except ValueError:
