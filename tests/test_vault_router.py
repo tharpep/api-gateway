@@ -88,10 +88,10 @@ def test_notes_posts_notes_verb_with_read_key(http):
 
 
 def test_notes_defaults(http):
-    """Without a query string the service gets no folders, no query, limit 50, offset 0."""
+    """Without a query string the service gets no folders, an empty query, limit 50, offset 0."""
     fake = http.use(ok({"notes": [], "total": 0}))
     assert http.get("/vault/notes").status_code == 200
-    assert fake.calls[0][1]["json"] == {"folders": [], "query": None, "limit": 50, "offset": 0}
+    assert fake.calls[0][1]["json"] == {"folders": [], "query": "", "limit": 50, "offset": 0}
 
 
 @pytest.mark.parametrize(

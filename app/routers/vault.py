@@ -69,7 +69,7 @@ async def capture(body: CaptureBody):
 @router.get("/notes")
 async def notes(
     folder: list[Literal["inbox", "notes", "claude"]] = Query(default=[]),
-    q: str | None = Query(default=None, max_length=200),
+    q: str = Query(default="", max_length=200),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
