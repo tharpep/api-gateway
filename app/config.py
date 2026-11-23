@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     sazed_api_key: str = ""
     vault_url: str = ""
     vault_api_key: str = ""
+    vault_capture_key: str = ""
     # GitHub App "sazed-worker-tharpep" (plans/07): bot identity for Sazed's issues and the
     # worker's PRs. The private key is the .pem, base64-encoded onto one line.
     github_app_id: str = ""

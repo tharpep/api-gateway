@@ -39,6 +39,7 @@ from app.routers import (
     sheets,
     storage,
     tasks,
+    vault,
     webhooks,
 )
 
@@ -159,6 +160,9 @@ app.include_router(
 )
 app.include_router(
     journal.router, prefix="/journal", tags=["journal"], dependencies=[Depends(verify_api_key)]
+)
+app.include_router(
+    vault.router, prefix="/vault", tags=["vault"], dependencies=[Depends(verify_api_key)]
 )
 app.include_router(
     homelab.router, prefix="/homelab", tags=["homelab"], dependencies=[Depends(verify_api_key)]
