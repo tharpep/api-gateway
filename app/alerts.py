@@ -28,11 +28,12 @@ from fastapi import HTTPException
 from app import activity
 from app.config import settings
 from app.http_client import get_client
+from app.notices import Kind
 from app.registry import ServiceDef, load_registry
 from app.routers import homelab
 from app.routers.github import GITHUB_API
 from app.routers.github import _headers as _github_headers
-from app.routers.notify import Priority, send_pushover
+from app.routers.notify import send_notice
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +47,11 @@ _deploys_alerted: set[int] = set()
 _last_deploy_check: datetime | None = None
 
 
-async def _push(title: str, message: str, priority: Priority, url: str | None = None) -> None:
+async def _push(kind: Kind, title: str, message: str, refs: dict[str, str] | None = None) -> None:
     if not settings.alerts_enabled:
         return
     try:
-        await send_pushover(title, message, priority, url or settings.console_url)
+        await send_notice(kind, title, message, refs)
     except HTTPException as e:
         logger.warning("Alert not delivered (%s): %s", e.detail, title)
     except Exception:
@@ -81,10 +82,22 @@ async def outages(
         # Sazed and infrastructure break other things; media apps can wait for the morning.
         urgent = any(s.group != "apps" for s, _ in down)
         title = f"Down: {down[0][0].name}" if len(down) == 1 else f"{len(down)} services down"
-        await _push(title, "\n".join(lines), Priority.HIGH if urgent else Priority.NORMAL)
+        await _push(
+            Kind.SERVICE_DOWN if urgent else Kind.APP_DOWN,
+            title,
+            "\n".join(lines),
+            _one_service([s for s, _ in down]),
+        )
     if back:
         names = ", ".join(s.name for s in back)
-        await _push(f"Recovered: {names}"[:250], f"Back up: {names}", Priority.LOW)
+        await _push(
+            Kind.RECOVERED, f"Recovered: {names}"[:250], f"Back up: {names}", _one_service(back)
+        )
+
+
+def _one_service(services: list[ServiceDef]) -> dict[str, str]:
+    """Open the service itself when only one changed; several open the Homelab page."""
+    return {"service": services[0].id} if len(services) == 1 else {}
 
 
 async def disks(containers: list[dict] | None) -> None:
@@ -125,7 +138,7 @@ async def disks(containers: list[dict] | None) -> None:
     if newly:
         title = "Disk space low"
         activity.record("disk", title, "error", {"lines": newly})
-        await _push(title, "\n".join(newly), Priority.NORMAL)
+        await _push(Kind.STORAGE_WARNING, title, "\n".join(newly))
 
 
 async def deploys() -> None:
@@ -171,4 +184,4 @@ async def deploys() -> None:
         activity.record(
             "deploy", f"Deploy failed: {name}", "error", {"commit": message, "url": url}
         )
-        await _push(f"Deploy failed: {name}", message, Priority.NORMAL, url)
+        await _push(Kind.DEPLOY_FAILED, f"Deploy failed: {name}", message, {"url": url})
