@@ -1,4 +1,4 @@
-"""Vault routes — capture a note and list notes through the vault service."""
+"""Vault routes — capture, list, read, rewrite and discard notes through the vault service."""
 
 import json
 from typing import Any, Literal
@@ -18,6 +18,12 @@ _TIMEOUT = 20.0
 class CaptureBody(BaseModel):
     content: str = Field(min_length=1, max_length=100000)
     source: str = Field(default="console", pattern=r"^[a-z][a-z0-9-]{0,49}$")
+
+
+class RewriteBody(BaseModel):
+    path: str = Field(min_length=1, max_length=300)
+    content: str = Field(min_length=1, max_length=100000)
+    version: str = Field(min_length=1, max_length=64)
 
 
 def _detail(response: httpx.Response, field: str) -> str:
@@ -46,6 +52,8 @@ async def _call(verb: str, key: str, body: dict[str, Any]) -> Any:
         raise HTTPException(504, "Notes service timed out")
     if r.status_code == 403:
         raise HTTPException(403, _detail(r, "refused"))
+    if r.status_code == 409:
+        raise HTTPException(409, _detail(r, "conflict"))
     if r.status_code == 400:
         raise HTTPException(400, _detail(r, "error"))
     if r.status_code != 200:
@@ -79,3 +87,25 @@ async def notes(
         settings.vault_api_key,
         {"folders": folder, "query": q, "limit": limit, "offset": offset},
     )
+
+
+@router.get("/note")
+async def note(path: str = Query(min_length=1, max_length=300)):
+    """Read one note with its version."""
+    return await _call("note", settings.vault_api_key, {"path": path})
+
+
+@router.put("/note")
+async def rewrite(body: RewriteBody):
+    """Replace a note's content if its version still matches."""
+    return await _call(
+        "rewrite",
+        settings.vault_capture_key,
+        {"path": body.path, "content": body.content, "version": body.version},
+    )
+
+
+@router.delete("/note")
+async def discard(path: str = Query(min_length=1, max_length=300)):
+    """Discard a note."""
+    return await _call("discard", settings.vault_capture_key, {"path": path})

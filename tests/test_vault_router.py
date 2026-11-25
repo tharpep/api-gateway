@@ -145,9 +145,14 @@ def test_notes_accepts_the_limits(http):
     assert http.get("/vault/notes", params=params).status_code == 200
 
 
+REWRITE = {"path": "inbox/a.md", "content": "new text", "version": "v1"}
+
 ROUTES = [
     ("post", "/vault/capture", {"json": {"content": "x"}}),
     ("get", "/vault/notes", {}),
+    ("get", "/vault/note", {"params": {"path": "inbox/a.md"}}),
+    ("put", "/vault/note", {"json": REWRITE}),
+    ("delete", "/vault/note", {"params": {"path": "inbox/a.md"}}),
 ]
 
 
@@ -165,6 +170,9 @@ def test_unset_url_is_503(http, monkeypatch, method, path, kwargs):
     [
         ("post", "/vault/capture", {"json": {"content": "x"}}, "vault_capture_key"),
         ("get", "/vault/notes", {}, "vault_api_key"),
+        ("get", "/vault/note", {"params": {"path": "inbox/a.md"}}, "vault_api_key"),
+        ("put", "/vault/note", {"json": REWRITE}, "vault_capture_key"),
+        ("delete", "/vault/note", {"params": {"path": "inbox/a.md"}}, "vault_capture_key"),
     ],
 )
 def test_unset_key_is_503(http, monkeypatch, method, path, kwargs, key):
@@ -213,6 +221,86 @@ def test_other_errors_are_502(http, method, path, kwargs, status):
     """Any other status at or above 400, including the service's 401, is a 502."""
     http.use(httpx.Response(status, json={"error": "x"}))
     assert getattr(http, method)(path, **kwargs).status_code == 502
+
+
+def test_note_posts_note_verb_with_read_key(http):
+    """Reading a note passes the path and sends only the read key."""
+    fake = http.use(ok({"path": "inbox/a.md", "content": "hi", "version": "v1"}))
+    r = http.get("/vault/note", params={"path": "inbox/a.md"})
+    assert r.status_code == 200
+    assert r.json() == {"path": "inbox/a.md", "content": "hi", "version": "v1"}
+    url, kwargs = fake.calls[0]
+    assert url == f"{URL}/v1/note"
+    assert kwargs["json"] == {"path": "inbox/a.md"}
+    assert kwargs["headers"] == {"X-Vault-Key": "read-key"}
+
+
+def test_rewrite_posts_rewrite_verb_with_capture_key(http):
+    """Rewriting a note passes path, content and version and sends only the capture key."""
+    fake = http.use(ok({"path": "inbox/a.md", "version": "v2"}))
+    r = http.put("/vault/note", json=REWRITE)
+    assert r.status_code == 200
+    assert r.json() == {"path": "inbox/a.md", "version": "v2"}
+    url, kwargs = fake.calls[0]
+    assert url == f"{URL}/v1/rewrite"
+    assert kwargs["json"] == REWRITE
+    assert kwargs["headers"] == {"X-Vault-Key": "capture-key"}
+
+
+def test_discard_posts_discard_verb_with_capture_key(http):
+    """Discarding a note passes the path, sends only the capture key and answers 200."""
+    fake = http.use(ok({"path": "inbox/a.md", "discarded": True}))
+    r = http.delete("/vault/note", params={"path": "inbox/a.md"})
+    assert r.status_code == 200
+    assert r.json() == {"path": "inbox/a.md", "discarded": True}
+    url, kwargs = fake.calls[0]
+    assert url == f"{URL}/v1/discard"
+    assert kwargs["json"] == {"path": "inbox/a.md"}
+    assert kwargs["headers"] == {"X-Vault-Key": "capture-key"}
+
+
+@pytest.mark.parametrize(("method", "path", "kwargs"), ROUTES[2:])
+def test_service_409_carries_conflict_text(http, method, path, kwargs):
+    """The service's conflict becomes a 409 whose detail is the conflict text."""
+    http.use(httpx.Response(409, json={"conflict": "version changed"}))
+    r = getattr(http, method)(path, **kwargs)
+    assert r.status_code == 409
+    assert r.json()["detail"] == "version changed"
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs"),
+    [
+        ("get", {}),
+        ("get", {"params": {"path": ""}}),
+        ("get", {"params": {"path": "x" * 301}}),
+        ("delete", {}),
+        ("delete", {"params": {"path": ""}}),
+        ("delete", {"params": {"path": "x" * 301}}),
+        ("put", {"json": {}}),
+        ("put", {"json": {**REWRITE, "path": ""}}),
+        ("put", {"json": {**REWRITE, "path": "x" * 301}}),
+        ("put", {"json": {**REWRITE, "content": ""}}),
+        ("put", {"json": {**REWRITE, "content": "x" * 100001}}),
+        ("put", {"json": {"path": "a.md", "content": "x"}}),
+        ("put", {"json": {**REWRITE, "version": ""}}),
+        ("put", {"json": {**REWRITE, "version": "v" * 65}}),
+    ],
+)
+def test_note_refuses_invalid_input(http, method, kwargs):
+    """A path, body or version outside the contract is a 422 and never reaches the service."""
+    fake = http.use(ok({}))
+    assert getattr(http, method)("/vault/note", **kwargs).status_code == 422
+    assert fake.calls == []
+
+
+def test_note_accepts_the_limits(http):
+    """A 300-character path, 100000 characters of content and a 64-character version pass."""
+    http.use(ok({"path": "p"}))
+    body = {"path": "p" * 300, "content": "x" * 100000, "version": "v" * 64}
+    assert http.put("/vault/note", json=body).status_code == 200
+    assert http.get("/vault/note", params={"path": "p" * 300}).status_code == 200
+    assert http.delete("/vault/note", params={"path": "p" * 300}).status_code == 200
 
 
 @pytest.mark.parametrize("payload", [{"result": "not json"}, {"nothing": 1}])
