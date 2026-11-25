@@ -745,6 +745,31 @@
                                         "number",
                                         "null"
                                       ]
+                                    },
+                                    "session_id": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "last_heard_at": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "doing": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "session_status": {
+                                      "description": "running, idle, ended or not_heard_from",
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
                                     }
                                   },
                                   "required": [
@@ -1575,6 +1600,31 @@
                               "pr_number": {
                                 "type": [
                                   "number",
+                                  "null"
+                                ]
+                              },
+                              "session_id": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "last_heard_at": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "doing": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "session_status": {
+                                "description": "running, idle, ended or not_heard_from",
+                                "type": [
+                                  "string",
                                   "null"
                                 ]
                               }
