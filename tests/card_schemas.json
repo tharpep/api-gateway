@@ -2135,5 +2135,428 @@
         ]
       }
     ]
+  },
+  "NeedsYouWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "needs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "description": "item, job or dispatch"
+            },
+            "title": {
+              "type": "string"
+            },
+            "repo": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "next": {
+              "type": "string"
+            },
+            "question": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "stage": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "task": {
+              "description": "A dispatch item's task",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "job_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "job_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "updated_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pr": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "number"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "checks": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "type": "string"
+                            },
+                            "passed": {
+                              "type": "number"
+                            },
+                            "total": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "passed",
+                            "total"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "review": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "verdict": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "verdict"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "additions": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "deletions": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "repo",
+                    "number",
+                    "url",
+                    "state"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "title",
+            "repo",
+            "next",
+            "question"
+          ]
+        },
+        "description": "Needs-me cards and dispatch questions, trimmed to what the card draws"
+      },
+      "needs_total": {
+        "description": "How many needs there are when the list was cut",
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "working": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "description": "job or dispatch"
+            },
+            "title": {
+              "type": "string"
+            },
+            "elapsed_s": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "elapsed_s"
+          ]
+        }
+      },
+      "done": {
+        "type": "object",
+        "properties": {
+          "succeeded": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "number"
+          },
+          "window_hours": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "succeeded",
+          "failed"
+        ]
+      },
+      "session_count": {
+        "description": "Live Claude Code sessions",
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "open_url": {
+        "description": "Console Home, https, in a ?page= or ?open= shape",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "needs",
+      "working",
+      "done"
+    ]
+  },
+  "PullRequestWidget": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "next": {
+        "type": "string"
+      },
+      "repo": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "job_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "job_status": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "stage": {
+        "type": "string",
+        "description": "inbox, next, doing, needs_me or done"
+      },
+      "pr": {
+        "description": "Sazed's last snapshot of the card's PR; absent on most cards",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "type": "string"
+              },
+              "number": {
+                "type": "number"
+              },
+              "url": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "description": "open, draft, merged or closed"
+              },
+              "checks": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "description": "passing, failing, running or none"
+                      },
+                      "passed": {
+                        "type": "number"
+                      },
+                      "total": {
+                        "type": "number"
+                      },
+                      "runs": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "conclusion": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "conclusion"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "passed",
+                      "total",
+                      "runs"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "review": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "verdict": {
+                        "type": "string",
+                        "description": "approve, approve_with_nits or request_changes"
+                      },
+                      "source": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "url": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "verdict",
+                      "source",
+                      "url"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "additions": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "deletions": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "merged_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fetched_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "repo",
+              "number",
+              "url",
+              "state"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "open_url": {
+        "description": "The card in the console, https, as ?open=backlog:<id>",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "id",
+      "title",
+      "next",
+      "repo",
+      "job_id",
+      "job_status",
+      "stage"
+    ]
   }
 }
