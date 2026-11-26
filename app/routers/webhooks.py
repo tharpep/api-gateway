@@ -90,6 +90,10 @@ def normalize_github(event: str, payload: dict) -> dict:
         "number": thread.get("number"),
         "is_pr": bool(pr) or "pull_request" in issue,
         "sender": (payload.get("sender") or {}).get("login", ""),
+        # Sazed's PR auto-link gates on these and fails closed on null, so issue events (no
+        # pull_request object) send null rather than a guess. head.repo is null for a deleted fork.
+        "author": (pr.get("user") or {}).get("login"),
+        "head_repo": ((pr.get("head") or {}).get("repo") or {}).get("full_name"),
         "title": (thread.get("title") or "")[:500],
         "body": ((thread if opened else detail).get("body") or "")[:8000],
         "branch": (pr.get("head") or {}).get("ref"),
