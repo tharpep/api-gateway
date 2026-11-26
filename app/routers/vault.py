@@ -26,6 +26,19 @@ class RewriteBody(BaseModel):
     version: str = Field(min_length=1, max_length=64)
 
 
+class FileBody(BaseModel):
+    path: str = Field(min_length=1, max_length=300)
+    topic: str = Field(min_length=1, max_length=40)
+    reason: str = Field(min_length=1, max_length=300)
+    kind: str = Field(default="", max_length=20)
+    filer: str = Field(default="", max_length=20)
+
+
+class MoveBody(BaseModel):
+    path: str = Field(min_length=1, max_length=300)
+    topic: str = Field(min_length=1, max_length=40)
+
+
 def _detail(response: httpx.Response, field: str) -> str:
     try:
         text = response.json()[field]
@@ -80,13 +93,31 @@ async def notes(
     q: str = Query(default="", max_length=200),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    topic: str = Query(default="", max_length=40),
 ):
-    """List notes, filtered by folder and text."""
-    return await _call(
-        "notes",
-        settings.vault_api_key,
-        {"folders": folder, "query": q, "limit": limit, "offset": offset},
-    )
+    """List notes, filtered by folder, text and topic."""
+    body: dict[str, Any] = {"folders": folder, "query": q, "limit": limit, "offset": offset}
+    if topic:
+        body["topic"] = topic
+    return await _call("notes", settings.vault_api_key, body)
+
+
+@router.get("/topics")
+async def topics():
+    """List the topics notes are filed under."""
+    return await _call("topics", settings.vault_api_key, {})
+
+
+@router.post("/file")
+async def file_under(body: FileBody):
+    """File a note under a topic, with the reason (Sazed's route)."""
+    return await _call("file_under", settings.vault_api_key, body.model_dump())
+
+
+@router.post("/move")
+async def move_to(body: MoveBody):
+    """Move a note to a topic (the console's route, for the human)."""
+    return await _call("move_to", settings.vault_capture_key, body.model_dump())
 
 
 @router.get("/note")

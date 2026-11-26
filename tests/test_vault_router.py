@@ -146,6 +146,14 @@ def test_notes_accepts_the_limits(http):
 
 
 REWRITE = {"path": "inbox/a.md", "content": "new text", "version": "v1"}
+FILE = {
+    "path": "inbox/a.md",
+    "topic": "cooking",
+    "reason": "a recipe",
+    "kind": "recipe",
+    "filer": "sazed",
+}
+MOVE = {"path": "inbox/a.md", "topic": "cooking"}
 
 ROUTES = [
     ("post", "/vault/capture", {"json": {"content": "x"}}),
@@ -153,6 +161,9 @@ ROUTES = [
     ("get", "/vault/note", {"params": {"path": "inbox/a.md"}}),
     ("put", "/vault/note", {"json": REWRITE}),
     ("delete", "/vault/note", {"params": {"path": "inbox/a.md"}}),
+    ("get", "/vault/topics", {}),
+    ("post", "/vault/file", {"json": FILE}),
+    ("post", "/vault/move", {"json": MOVE}),
 ]
 
 
@@ -173,6 +184,9 @@ def test_unset_url_is_503(http, monkeypatch, method, path, kwargs):
         ("get", "/vault/note", {"params": {"path": "inbox/a.md"}}, "vault_api_key"),
         ("put", "/vault/note", {"json": REWRITE}, "vault_capture_key"),
         ("delete", "/vault/note", {"params": {"path": "inbox/a.md"}}, "vault_capture_key"),
+        ("get", "/vault/topics", {}, "vault_api_key"),
+        ("post", "/vault/file", {"json": FILE}, "vault_api_key"),
+        ("post", "/vault/move", {"json": MOVE}, "vault_capture_key"),
     ],
 )
 def test_unset_key_is_503(http, monkeypatch, method, path, kwargs, key):
@@ -308,3 +322,108 @@ def test_unreadable_success_is_502(http, payload):
     """A 200 whose body is not the documented envelope is a 502."""
     http.use(httpx.Response(200, json=payload))
     assert http.get("/vault/notes").status_code == 502
+
+
+def test_notes_sends_no_topic_without_the_query(http):
+    """Without a topic query the body has no topic key."""
+    fake = http.use(ok({"notes": [], "total": 0}))
+    assert http.get("/vault/notes").status_code == 200
+    assert "topic" not in fake.calls[0][1]["json"]
+
+
+def test_notes_sends_the_topic_query(http):
+    """A topic query is passed to the service as topic."""
+    fake = http.use(ok({"notes": [], "total": 0}))
+    assert http.get("/vault/notes", params={"topic": "cooking"}).status_code == 200
+    assert fake.calls[0][1]["json"]["topic"] == "cooking"
+
+
+def test_notes_refuses_a_long_topic(http):
+    """A 41-character topic is a 422 and never reaches the service."""
+    fake = http.use(ok({}))
+    assert http.get("/vault/notes", params={"topic": "t" * 41}).status_code == 422
+    assert fake.calls == []
+
+
+def test_topics_posts_topics_verb_with_read_key(http):
+    """Topics sends an empty body and only the read key."""
+    fake = http.use(ok({"topics": [{"topic": "cooking", "count": 2}]}))
+    r = http.get("/vault/topics")
+    assert r.status_code == 200
+    assert r.json() == {"topics": [{"topic": "cooking", "count": 2}]}
+    url, kwargs = fake.calls[0]
+    assert url == f"{URL}/v1/topics"
+    assert kwargs["json"] == {}
+    assert kwargs["headers"] == {"X-Vault-Key": "read-key"}
+
+
+def test_file_posts_file_under_verb_with_read_key(http):
+    """Filing passes the five fields, sends only the read key and answers 200."""
+    fake = http.use(ok({"path": "notes/cooking/a.md", "filed": True}))
+    r = http.post("/vault/file", json=FILE)
+    assert r.status_code == 200
+    assert r.json() == {"path": "notes/cooking/a.md", "filed": True}
+    url, kwargs = fake.calls[0]
+    assert url == f"{URL}/v1/file_under"
+    assert kwargs["json"] == FILE
+    assert kwargs["headers"] == {"X-Vault-Key": "read-key"}
+
+
+def test_file_kind_and_filer_default_empty(http):
+    """A body without kind and filer sends both as empty strings."""
+    fake = http.use(ok({"filed": True}))
+    body = {"path": "inbox/a.md", "topic": "cooking", "reason": "a recipe"}
+    assert http.post("/vault/file", json=body).status_code == 200
+    assert fake.calls[0][1]["json"] == {**body, "kind": "", "filer": ""}
+
+
+def test_move_posts_move_to_verb_with_capture_key(http):
+    """Moving passes path and topic, sends only the capture key and answers 200."""
+    fake = http.use(ok({"path": "notes/cooking/a.md", "moved": True}))
+    r = http.post("/vault/move", json=MOVE)
+    assert r.status_code == 200
+    assert r.json() == {"path": "notes/cooking/a.md", "moved": True}
+    url, kwargs = fake.calls[0]
+    assert url == f"{URL}/v1/move_to"
+    assert kwargs["json"] == MOVE
+    assert kwargs["headers"] == {"X-Vault-Key": "capture-key"}
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/vault/file", {k: v for k, v in FILE.items() if k != "path"}),
+        ("/vault/file", {**FILE, "path": ""}),
+        ("/vault/file", {**FILE, "path": "x" * 301}),
+        ("/vault/file", {**FILE, "topic": ""}),
+        ("/vault/file", {**FILE, "topic": "t" * 41}),
+        ("/vault/file", {**FILE, "reason": ""}),
+        ("/vault/file", {**FILE, "reason": "r" * 301}),
+        ("/vault/file", {**FILE, "kind": "k" * 21}),
+        ("/vault/file", {**FILE, "filer": "f" * 21}),
+        ("/vault/move", {"topic": "cooking"}),
+        ("/vault/move", {**MOVE, "path": ""}),
+        ("/vault/move", {**MOVE, "path": "x" * 301}),
+        ("/vault/move", {**MOVE, "topic": ""}),
+        ("/vault/move", {**MOVE, "topic": "t" * 41}),
+    ],
+)
+def test_file_and_move_refuse_invalid_body(http, path, body):
+    """A body outside the contract is a 422 and never reaches the service."""
+    fake = http.use(ok({}))
+    assert http.post(path, json=body).status_code == 422
+    assert fake.calls == []
+
+
+def test_file_and_move_accept_the_limits(http):
+    """The longest path, topic, reason, kind and filer are inside the contract."""
+    http.use(ok({"filed": True}))
+    body = {
+        "path": "p" * 300,
+        "topic": "t" * 40,
+        "reason": "r" * 300,
+        "kind": "k" * 20,
+        "filer": "f" * 20,
+    }
+    assert http.post("/vault/file", json=body).status_code == 200
+    assert http.post("/vault/move", json={"path": "p" * 300, "topic": "t" * 40}).status_code == 200

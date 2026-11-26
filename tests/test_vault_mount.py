@@ -7,3 +7,6 @@ def test_vault_routes_are_mounted():
     assert "/vault/capture" in paths
     assert "/vault/notes" in paths
     assert "/vault/note" in paths
+    assert "/vault/topics" in paths
+    assert "/vault/file" in paths
+    assert "/vault/move" in paths

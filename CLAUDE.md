@@ -93,11 +93,14 @@ Each router is a FastAPI `APIRouter`. Auth applied as a dependency on all except
 
 - `vault.py` — capture, list, read, rewrite and discard notes through the vault service on CT 109 (`VAULT_URL`; reads use `VAULT_API_KEY`).
   - `POST /vault/capture` — writes a note into the vault's `inbox/`; needs `VAULT_CAPTURE_KEY`, a separate key from `VAULT_API_KEY`.
-  - `GET /vault/notes` — list notes; filters `folder` (`inbox` | `notes` | `claude`, repeatable), `q`, `limit`, `offset`.
+  - `GET /vault/notes` — list notes; filters `folder` (`inbox` | `notes` | `claude`, repeatable), `q`, `limit`, `offset`, `topic` (at most 40 characters; sent to the service only when not empty, so an older notes service still answers).
   - `GET /vault/note?path=` — read one note with its version (`VAULT_API_KEY`).
   - `PUT /vault/note` — body `{path, content, version}`; replaces the note if `version` still matches, else 409 with the service's `conflict` text; needs `VAULT_CAPTURE_KEY`.
   - `DELETE /vault/note?path=` — discard a note; needs `VAULT_CAPTURE_KEY`.
-  - Capture, rewrite and discard are REST-only: no MCP tool wraps them, so no agent tool can change a note in the vault's `inbox/` or `notes/`.
+  - `GET /vault/topics` — list the topics notes are filed under (`VAULT_API_KEY`).
+  - `POST /vault/file` — body `{path, topic, reason, kind, filer}`; files a note under a topic through the `file_under` verb. Sazed calls it, so it uses `VAULT_API_KEY`.
+  - `POST /vault/move` — body `{path, topic}`; moves a note to a topic through the `move_to` verb. The console calls it for the human, so it needs `VAULT_CAPTURE_KEY`.
+  - Capture, rewrite, discard, file and move are REST-only: no MCP tool wraps them, so no agent tool can change a note in the vault's `inbox/` or `notes/`.
 
 - `homelab.py` — Proxmox host and container status plus power actions (requires `PROXMOX_HOST`, `PROXMOX_READ_TOKEN`; actions need `PROXMOX_POWER_TOKEN`; `PROXMOX_CA_CERT` points at `pve-root-ca.pem`). Uses its own httpx client because Proxmox has its own CA. Which containers can be started/restarted is decided by the power token's Proxmox ACLs, not by this service; a Proxmox 403 is returned as 403.
   - `GET /homelab/host` — CPU, memory, root disk, uptime, storage pools
