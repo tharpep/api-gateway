@@ -198,11 +198,145 @@ def test_a_job_card_is_refused(sazed):
     assert client.calls == []
 
 
-def test_no_tool_withdraws_or_approves_a_job():
-    """Withdraw is Pryce's alone, and a job's approve-and-run click stays in the console."""
-    names = set(_registered())
-    assert not {n for n in names if "withdraw" in n}
-    assert {n for n in names if "approve" in n} == {"board_approve_plan"}
+UUID = "11111111-2222-3333-4444-555555555555"
+CRAFTED = [
+    f"../../jobs/{UUID}/approve?",
+    f"../../jobs/{UUID}/approve#",
+    f"../jobs/{UUID}/cancel?x=",
+    "x/../../../sessions",
+    "..",
+    ".",
+    "%2e%2e",
+    f"%2e%2e%2fjobs%2f{UUID}%2fapprove",
+    f"{UUID}%2f..%2f..%2fjobs",
+    f"{UUID}/../../jobs/{UUID}/approve",
+    f"{UUID}?x=1",
+    f"{UUID}#x",
+    f"{UUID}%0a",
+    f"{UUID}\n",
+    f"{UUID}\\..\\..",
+    f"http://evil.test/jobs/{UUID}/approve",
+    f"//evil.test/{UUID}",
+    "",
+]
+
+# Each tool that puts an argument in a Sazed URL: how to call it with a crafted value, and the
+# only paths it may send to.
+ID_TOOLS = {
+    "board_approve_plan": (
+        lambda v: {"card_id": f"item:{v}", "agent": "orch"},
+        rf"/backlog/{UUID}/approve-plan",
+    ),
+    "board_start_card": (
+        lambda v: {"card_id": f"item:{v}", "agent": "orch"},
+        rf"/backlog/{UUID}/start",
+    ),
+    "board_update_card": (lambda v: {"card_id": f"item:{v}", "note": "n"}, rf"/backlog/{UUID}"),
+    "board_move_card": (lambda v: {"card_id": v, "workstream_id": None}, rf"/backlog/{UUID}"),
+    "board_card": (lambda v: {"card_id": f"job:{v}"}, rf"/board/job:{UUID}"),
+    "board_update_workstream": (
+        lambda v: {"workstream_id": v, "title": "t"},
+        rf"/board/workstreams/{UUID}",
+    ),
+    "board_project": (lambda v: {"slug": v}, r"/board/projects/ok-slug"),
+    "board_update_project": (lambda v: {"slug": v, "title": "t"}, r"/board/projects/ok-slug"),
+    "board_add_workstream": (
+        lambda v: {"slug": v, "title": "t"},
+        r"/board/projects/ok-slug/workstreams",
+    ),
+    "continue_job": (lambda v: {"job_id": v, "instruction": "go"}, rf"/jobs/{UUID}(/continue)?"),
+    "resume_job": (lambda v: {"job_id": v}, rf"/jobs/{UUID}(/resume)?"),
+    "job_status": (lambda v: {"job_id": v}, rf"/jobs/{UUID}"),
+    "cancel_job": (lambda v: {"job_id": v}, rf"/jobs/{UUID}/cancel"),
+    "bakeoff_status": (lambda v: {"bakeoff_id": v}, r"/bakeoffs/0a1b2c3d"),
+    "promote_bakeoff": (lambda v: {"bakeoff_id": v, "arm": "opus"}, r"/bakeoffs/0a1b2c3d/promote"),
+    "plan_list": (lambda v: {"project": v}, r"/board/plans"),
+    "plan_read": (lambda v: {"slug": v}, r"/board/plans/ok-slug"),
+    "plan_save": (
+        lambda v: {"slug": v, "body": "b", "reason": "r", "expected_version": 1},
+        r"/board/plans/ok-slug/versions",
+    ),
+    "plan_diff": (lambda v: {"slug": v, "a": 1, "b": 2}, r"/board/plans/ok-slug/diff"),
+    "plan_update": (lambda v: {"slug": v, "title": "t"}, r"/board/plans/ok-slug"),
+    "profile_read": (lambda v: {"name": v}, r"/agents/profiles/ok-name"),
+    "profile_save": (lambda v: {"name": v, "reason": "r"}, r"/agents/profiles(/ok-name)?"),
+    "mcp_server_save": (
+        lambda v: {"name": v, "transport": "http", "reason": "r"},
+        r"/agents/mcp-servers/ok-name",
+    ),
+}
+GOOD = {
+    "board_project": "ok-slug",
+    "board_update_project": "ok-slug",
+    "board_add_workstream": "ok-slug",
+    "plan_list": "ok-slug",
+    "plan_read": "ok-slug",
+    "plan_save": "ok-slug",
+    "plan_diff": "ok-slug",
+    "plan_update": "ok-slug",
+    "profile_read": "ok-name",
+    "profile_save": "ok-name",
+    "mcp_server_save": "ok-name",
+    "bakeoff_status": "0a1b2c3d",
+    "promote_bakeoff": "0a1b2c3d",
+}
+
+
+@pytest.fixture
+def transport(monkeypatch):
+    """A real httpx client on a mock transport, so URL normalisation (../, ?, #) is httpx's own."""
+    monkeypatch.setattr(settings, "sazed_url", "http://sazed.test")
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/agents/profiles":
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json={"id": UUID, "status": "queued", "kind": "x", "card": {}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    monkeypatch.setattr(mcp_server, "get_client", lambda: client)
+    monkeypatch.setattr(mcp_server, "_WAIT_SECONDS", 0)
+    return seen
+
+
+def _call_tool(tool: str, args: dict):
+    try:
+        asyncio.run(mcp.call_tool(tool, args))
+    except ToolError:
+        pass
+
+
+@pytest.mark.parametrize("tool", ID_TOOLS)
+@pytest.mark.parametrize("crafted", CRAFTED)
+def test_a_crafted_id_reaches_no_other_route(transport, tool, crafted):
+    """No id, however crafted, sends a request to any path but the tool's own, so no board
+    tool can reach a job's approve or cancel route."""
+    build, own = ID_TOOLS[tool]
+    _call_tool(tool, build(crafted))
+    for request in transport:
+        assert request.url.host == "sazed.test"
+        assert re.fullmatch(own, request.url.path), (tool, crafted, str(request.url))
+        assert "approve" not in request.url.query.decode() and request.url.fragment == ""
+
+
+@pytest.mark.parametrize("tool", ID_TOOLS)
+def test_a_real_id_reaches_the_tools_own_route(transport, tool):
+    build, own = ID_TOOLS[tool]
+    asyncio.run(mcp.call_tool(tool, build(GOOD.get(tool, UUID))))
+    assert transport and all(re.fullmatch(own, r.url.path) for r in transport)
+
+
+def test_no_tool_withdraws():
+    """Withdraw is Pryce's alone in the console."""
+    assert not {n for n in _registered() if "withdraw" in n}
+
+
+def test_an_empty_5xx_reads_as_a_line(monkeypatch):
+    monkeypatch.setattr(settings, "sazed_url", "http://sazed.test")
+    monkeypatch.setattr(mcp_server, "get_client", lambda: FakeClient(httpx.Response(503)))
+    with pytest.raises(ToolError, match="^Sazed answered 503 with no detail$"):
+        _run("board_start_card")
 
 
 def test_server_instructions_fit_the_cap():

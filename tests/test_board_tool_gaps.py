@@ -83,7 +83,7 @@ def test_one_failed_entry_does_not_stop_the_rest(monkeypatch):
         mcp_server.board_update_cards(
             [
                 {"card_id": CARD, "note": "a"},
-                {"card_id": "item:bad", "note": "b"},
+                {"card_id": "item:bad00000-0000-4000-8000-000000000000", "note": "b"},
                 {"note": "no card id"},
                 {"card_id": "job:123", "note": "c"},
                 {"card_id": CARD, "note": "d"},
@@ -92,7 +92,11 @@ def test_one_failed_entry_does_not_stop_the_rest(monkeypatch):
     )
     results = out["results"]
     assert [r["ok"] for r in results] == [True, False, False, False, True]
-    assert results[1] == {"id": "item:bad", "ok": False, "error": "Item not found"}
+    assert results[1] == {
+        "id": "item:bad00000-0000-4000-8000-000000000000",
+        "ok": False,
+        "error": "Item not found",
+    }
     assert results[2]["id"] is None and "card_id" in results[2]["error"]
     assert "job cards" in results[3]["error"]
     assert len(calls) == 3

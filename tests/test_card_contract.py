@@ -145,7 +145,7 @@ SAZED = {
     "/board/projects": {"projects": [_project(cards=False)]},
     "/board/projects/parser": _project(cards=True),
     "/jobs/code-task": {**JOB, "status": "needs_approval", "result": None},
-    "/jobs/j1?events=false": JOB,
+    "/jobs/5d2c1f0e-0000-4000-8000-000000000001?events=false": JOB,
     "/jobs?limit=10": JOBS,
 }
 
@@ -200,7 +200,7 @@ SAMPLES = {
         }
     ],
     "delegate_code_task": [{"repo": "owner/repo", "instruction": "Fix it"}],
-    "job_status": [{"job_id": "j1"}],
+    "job_status": [{"job_id": "5d2c1f0e-0000-4000-8000-000000000001"}],
     "list_jobs": [{}],
     "board_projects": [{}, {"detail": "full"}],
     "board_project": [{"slug": "parser"}, {"slug": "parser", "detail": "full"}],
