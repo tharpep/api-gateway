@@ -65,6 +65,15 @@ CARD = {
     "plan_id": None,
     "plan_section": None,
     "plan_version": None,
+    "plan_approval": {
+        "at": "2026-11-25T18:40:02.118000+00:00",
+        "by": "agent:orchestrator",
+        "plan": "parser",
+        "version": 3,
+        "section": "build",
+        "changed_since": False,
+    },
+    "started": {"at": "2026-11-25T18:52:10.004000+00:00", "by": "pryce"},
 }
 
 
