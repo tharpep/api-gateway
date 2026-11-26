@@ -141,7 +141,105 @@ JOBS = {
     ]
 }
 
+CARD_UUID = "4b1e0c2a-33ac-4055-aa8c-8c1f7b5541a7"
+JOB_UUID = "5d2c1f0e-0000-4000-8000-000000000002"
+
+# A card with no PR: what 228 of 267 live cards look like.
+NO_PR_CARD = {
+    **CARD,
+    "id": f"job:{JOB_UUID}",
+    "kind": "job",
+    "stage": "needs_me",
+    "next": "Answer its question",
+    "pr": None,
+    "pr_url": None,
+    "pr_number": None,
+    "repo": None,
+    "job_id": JOB_UUID,
+    "job_status": "needs_input",
+    "question": "Which schema wins?",
+}
+
+EMPTY_COMMAND = {
+    "needs": [],
+    "working": [],
+    "done": {"succeeded": 2, "failed": 0, "latest": [], "window_hours": 24},
+    "sessions": [],
+    "session_health": {"silent_after_s": 900, "last_heard_at": None, "stale_card_ids": []},
+    "plans_to_approve": [],
+    "ready_to_start": 0,
+}
+
+
+def _merge_call(i: int) -> dict:
+    pr = {**CARD["pr"], "number": i, "url": f"https://github.com/owner/repo/pull/{i}"}
+    return {
+        **CARD,
+        "id": f"item:{i}",
+        "stage": "needs_me",
+        "next": "Ready to merge",
+        "summary": "s" * 600,
+        "why": "w" * 150,
+        "note": "n" * 450,
+        "pr": pr,
+    }
+
+
+DISPATCH_QUESTION = {
+    "id": "dispatch:notes-v1:sheet",
+    "kind": "dispatch",
+    "title": "sheet: show where a note is filed",
+    "repo": "owner/repo",
+    "next": "Answer its question",
+    "question": "q" * 5000,
+    "updated_at": "2026-11-26T12:00:00Z",
+}
+
+WORKING = [
+    {
+        "kind": "job",
+        "title": "Fix the parser",
+        "status": "running",
+        "steps": ["a", "b"],
+        "tools": 3,
+        "elapsed_s": 120,
+        "timeout_s": 1800,
+    },
+    {
+        "kind": "dispatch",
+        "plan": "notes-v1",
+        "task": "sheet",
+        "title": "sheet: x",
+        "tools": 6,
+        "elapsed_s": 76,
+        "line": "sonnet / high",
+        "heartbeat_at": "2026-11-26T12:00:00Z",
+    },
+]
+
+COMMANDS = {
+    "empty": EMPTY_COMMAND,
+    "merge_calls": {
+        **EMPTY_COMMAND,
+        "needs": [_merge_call(i) for i in range(1, 15)],
+        "working": WORKING,
+        "sessions": [{"session_id": "s1"}],
+    },
+    "question": {**EMPTY_COMMAND, "needs": [_merge_call(1), DISPATCH_QUESTION, NO_PR_CARD]},
+    "oversized": {
+        **EMPTY_COMMAND,
+        "needs": [
+            {**_merge_call(i), "title": "t" * 300 + "x" * 700, "question": "q" * 9000}
+            for i in range(1, 121)
+        ],
+        "working": WORKING * 40,
+    },
+}
+
 SAZED = {
+    "/board/command": EMPTY_COMMAND,
+    f"/board/item:{CARD_UUID}": {**CARD, "id": f"item:{CARD_UUID}"},
+    f"/board/job:{JOB_UUID}": NO_PR_CARD,
     "/board/projects": {"projects": [_project(cards=False)]},
     "/board/projects/parser": _project(cards=True),
     "/jobs/code-task": {**JOB, "status": "needs_approval", "result": None},
@@ -204,6 +302,8 @@ SAMPLES = {
     "list_jobs": [{}],
     "board_projects": [{}, {"detail": "full"}],
     "board_project": [{"slug": "parser"}, {"slug": "parser", "detail": "full"}],
+    "board_command": [{}],
+    "board_card": [{"card_id": f"item:{CARD_UUID}"}, {"card_id": f"job:{JOB_UUID}"}],
 }
 
 
@@ -312,3 +412,106 @@ def test_show_card_refuses_more_than_the_card_draws(field, limit):
     entry = {"label": "x", "value": "1"}
     with pytest.raises(ToolError, match=field):
         asyncio.run(mcp.call_tool("show_card", {"title": "t", field: [entry] * (limit + 1)}))
+
+
+def _command(monkeypatch, payload: dict) -> list[tuple[str, str]]:
+    calls: list[tuple[str, str]] = []
+
+    async def sazed(method, path, body=None):
+        calls.append((method, path))
+        return payload
+
+    monkeypatch.setattr(mcp_server, "_sazed", sazed)
+    return calls
+
+
+@pytest.mark.parametrize("sample", list(COMMANDS))
+def test_board_command_validates_and_only_reads(monkeypatch, sample):
+    """Every board_command sample validates as a Needs you card, from one GET of /board/command."""
+    calls = _command(monkeypatch, COMMANDS[sample])
+    result = asyncio.run(mcp.call_tool("board_command", {}))
+    assert calls == [("GET", "/board/command")]
+    assert _schema_errors("NeedsYouWidget", result.structuredContent) == []
+
+
+def test_board_command_is_bounded(monkeypatch):
+    """120 needs with long text stay under 100,000 characters across both copies, questions
+    are cut to 5,000 characters, and needs_total still counts every need."""
+    _command(monkeypatch, COMMANDS["oversized"])
+    result = asyncio.run(mcp.call_tool("board_command", {}))
+    out = result.structuredContent
+    assert len(result.content[0].text) * 2 <= 100_000
+    assert 0 < len(out["needs"]) < 50
+    assert out["needs_total"] == 120
+    assert all(len(n["title"]) == 300 and len(n["question"]) == 5000 for n in out["needs"])
+    assert len(out["working"]) == 50
+
+
+def test_board_command_trims_needs_to_card_fields(monkeypatch):
+    """A need keeps only what the card draws, questions come first, and PR checks carry no runs."""
+    _command(monkeypatch, COMMANDS["question"])
+    out = asyncio.run(mcp.call_tool("board_command", {})).structuredContent
+    assert [n["id"] for n in out["needs"]] == [DISPATCH_QUESTION["id"], NO_PR_CARD["id"], "item:1"]
+    merge = out["needs"][2]
+    assert "summary" not in merge and "note" not in merge
+    assert merge["pr"]["checks"] == {"state": "passing", "passed": 2, "total": 2}
+    assert merge["pr"]["review"] is None
+    assert out["session_count"] == 0
+    assert out["open_url"] == "https://sazed.tail77c590.ts.net/?page=home"
+
+
+def test_board_card_links_into_the_console():
+    """An item card opens as ?open=backlog:<uuid>, a job card as ?open=job:<uuid>."""
+    item = asyncio.run(mcp.call_tool("board_card", {"card_id": f"item:{CARD_UUID}"}))
+    job = asyncio.run(mcp.call_tool("board_card", {"card_id": f"job:{JOB_UUID}"}))
+    base = "https://sazed.tail77c590.ts.net/?open="
+    assert item.structuredContent["open_url"] == f"{base}backlog:{CARD_UUID}"
+    assert job.structuredContent["open_url"] == f"{base}job:{JOB_UUID}"
+    assert job.structuredContent["pr"] is None
+
+
+def test_board_card_caps_check_runs(monkeypatch):
+    """A PR with 45 check runs draws the first 20; passed and total still count all 45."""
+    checks = {"state": "passing", "passed": 45, "total": 45}
+    runs = [{"name": f"r{i}", "conclusion": "success"} for i in range(45)]
+    card = {**CARD, "pr": {**CARD["pr"], "checks": {**checks, "runs": runs}}}
+    _command(monkeypatch, card)
+    out = asyncio.run(mcp.call_tool("board_card", {"card_id": f"item:{CARD_UUID}"}))
+    pr = out.structuredContent["pr"]
+    assert [r["name"] for r in pr["checks"]["runs"]] == [f"r{i}" for i in range(20)]
+    assert pr["checks"]["total"] == 45
+    assert _schema_errors("PullRequestWidget", out.structuredContent) == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "javascript:alert(1)",
+        "data:text/html,x",
+        "http://github.com/owner/repo/pull/7",
+        "https://evil.example/owner/repo/pull/7",
+        "https://github.com.evil.example/x",
+        "https://user@github.com/x",
+        "https://github.com:8443/x",
+        None,
+    ],
+)
+def test_pr_links_off_github_are_dropped(monkeypatch, url):
+    """A PR or review link that is not https on github.com reaches neither card as a link."""
+    pr = {**CARD["pr"], "url": url, "review": {"verdict": "approve", "source": "x", "url": url}}
+    card = {**CARD, "pr": pr, "pr_url": url}
+    _command(monkeypatch, card)
+    out = asyncio.run(mcp.call_tool("board_card", {"card_id": f"item:{CARD_UUID}"}))
+    assert out.structuredContent["pr"]["url"] == ""
+    assert out.structuredContent["pr"]["review"]["url"] == ""
+    assert out.structuredContent["pr_url"] is None
+    _command(monkeypatch, {**EMPTY_COMMAND, "needs": [card]})
+    need = asyncio.run(mcp.call_tool("board_command", {})).structuredContent["needs"][0]
+    assert need["pr"]["url"] == ""
+
+
+def test_no_console_link_without_https(monkeypatch):
+    """A console_url that is not https gives the cards no console button."""
+    monkeypatch.setattr(mcp_server.settings, "console_url", "http://192.168.50.155:3000")
+    out = asyncio.run(mcp.call_tool("board_command", {})).structuredContent
+    assert out["open_url"] is None
