@@ -957,7 +957,8 @@ async def board_file_card(
     section id it implements (from plan_read), so the card shows under that section.
     rank puts the new card at that priority (1 = top, others shift); left out, it is unranked.
     Fails if a similar card already exists: move that one instead with board_move_card. Only
-    when the card is genuinely distinct, pass allow_similar true with similar_reason saying why."""
+    when the card is genuinely distinct, pass allow_similar true with similar_reason saying why.
+    Name the work's branch suggested_branch: Sazed then links the PR to this card by itself."""
     if allow_similar and not similar_reason:
         raise ToolError("similar_reason is required when allow_similar is true")
     body = {
@@ -979,7 +980,9 @@ async def board_file_card(
     if allow_similar:
         body |= {"allow_similar": True, "similar_reason": similar_reason}
     result = await _sazed("POST", "/backlog", body)
-    out = _written(result, {}, "id", "title", "status", "workstream_id", "plan_section")
+    out = _written(
+        result, {}, "id", "title", "status", "workstream_id", "plan_section", "suggested_branch"
+    )
     if parked := result.get("similar_parked"):
         out["similar_parked"] = {k: parked.get(k) for k in ("id", "title", "status")}
     return out

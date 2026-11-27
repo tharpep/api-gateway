@@ -33,6 +33,15 @@ def test_file_card_sends_rank_only_when_given(sent):
     assert "rank" not in sent[1][2]
 
 
+def test_file_card_returns_the_branch_name_sazed_suggests(monkeypatch):
+    async def fake(method, path, body=None):
+        return {"id": "7048f9ca", "title": "A card", "suggested_branch": "feature/7048f9ca-a-card"}
+
+    monkeypatch.setattr(mcp_server, "_sazed", fake)
+    out = asyncio.run(mcp_server.board_file_card("A card", WORKSTREAM))
+    assert out["suggested_branch"] == "feature/7048f9ca-a-card"
+
+
 def test_board_list_returns_each_cards_rank(monkeypatch):
     async def fake(method, path, body=None):
         return {"counts": {}, "cards": [{"id": "item:a", "title": "A", "stage": "next", "rank": 3}]}
