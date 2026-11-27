@@ -1024,6 +1024,79 @@
                                 "number",
                                 "null"
                               ]
+                            },
+                            "plan_approval": {
+                              "description": "Who approved the card's plan; absent from payloads before slice 4",
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "at": {
+                                      "type": "string"
+                                    },
+                                    "by": {
+                                      "type": "string",
+                                      "description": "pryce or agent:<name>"
+                                    },
+                                    "plan": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "version": {
+                                      "type": [
+                                        "number",
+                                        "null"
+                                      ]
+                                    },
+                                    "section": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "changed_since": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "at",
+                                    "by",
+                                    "plan",
+                                    "version",
+                                    "section",
+                                    "changed_since"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "started": {
+                              "description": "Who started the card; absent from payloads before slice 4",
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "at": {
+                                      "type": "string"
+                                    },
+                                    "by": {
+                                      "type": "string",
+                                      "description": "pryce or agent:<name>"
+                                    }
+                                  },
+                                  "required": [
+                                    "at",
+                                    "by"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -1880,6 +1953,79 @@
                         "type": [
                           "number",
                           "null"
+                        ]
+                      },
+                      "plan_approval": {
+                        "description": "Who approved the card's plan; absent from payloads before slice 4",
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "at": {
+                                "type": "string"
+                              },
+                              "by": {
+                                "type": "string",
+                                "description": "pryce or agent:<name>"
+                              },
+                              "plan": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "version": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "section": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "changed_since": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "at",
+                              "by",
+                              "plan",
+                              "version",
+                              "section",
+                              "changed_since"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "started": {
+                        "description": "Who started the card; absent from payloads before slice 4",
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "at": {
+                                "type": "string"
+                              },
+                              "by": {
+                                "type": "string",
+                                "description": "pryce or agent:<name>"
+                              }
+                            },
+                            "required": [
+                              "at",
+                              "by"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
                         ]
                       }
                     },
