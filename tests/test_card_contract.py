@@ -444,6 +444,7 @@ def test_board_command_is_bounded(monkeypatch):
     assert 0 < len(out["needs"]) < 50
     assert out["needs_total"] == 120
     assert all(len(n["title"]) == 300 and len(n["question"]) == 5000 for n in out["needs"])
+    assert all(n["title"].endswith("…") for n in out["needs"])
     assert len(out["working"]) == 50
 
 
@@ -480,6 +481,7 @@ def test_board_card_caps_check_runs(monkeypatch):
     pr = out.structuredContent["pr"]
     assert [r["name"] for r in pr["checks"]["runs"]] == [f"r{i}" for i in range(20)]
     assert pr["checks"]["total"] == 45
+    assert pr["checks"]["runs_omitted"] == 25
     assert _schema_errors("PullRequestWidget", out.structuredContent) == []
 
 
@@ -510,8 +512,100 @@ def test_pr_links_off_github_are_dropped(monkeypatch, url):
     assert need["pr"]["url"] == ""
 
 
-def test_no_console_link_without_https(monkeypatch):
-    """A console_url that is not https gives the cards no console button."""
-    monkeypatch.setattr(mcp_server.settings, "console_url", "http://192.168.50.155:3000")
+@pytest.mark.parametrize(
+    "console_url",
+    [
+        "http://192.168.50.155:3000",
+        "https://sazed.example/?x=1",
+        "https://sazed.example/#frag",
+        "https://user:pw@sazed.example",
+        "https://sazed.example:8443",
+        " https://sazed.example",
+        "",
+    ],
+)
+def test_no_console_link_from_a_console_url_the_card_would_refuse(monkeypatch, console_url):
+    """A console_url that is not a bare https origin gives the cards no console button."""
+    monkeypatch.setattr(mcp_server.settings, "console_url", console_url)
     out = asyncio.run(mcp.call_tool("board_command", {})).structuredContent
     assert out["open_url"] is None
+    card = asyncio.run(mcp.call_tool("board_card", {"card_id": f"item:{CARD_UUID}"}))
+    assert card.structuredContent["open_url"] is None
+
+
+def test_board_command_lists_at_most_50_needs(monkeypatch):
+    """60 short merge calls list 50, and needs_total still counts 60."""
+    short = [{**_merge_call(i), "summary": "", "why": "", "note": ""} for i in range(1, 61)]
+    _command(monkeypatch, {**EMPTY_COMMAND, "needs": short})
+    out = asyncio.run(mcp.call_tool("board_command", {})).structuredContent
+    assert len(out["needs"]) == 50
+    assert out["needs_total"] == 60
+
+
+def test_a_long_question_is_cut_at_a_word(monkeypatch):
+    """A question past 5,000 characters ends at a whole word followed by an ellipsis."""
+    need = {**DISPATCH_QUESTION, "question": "word " * 1500}
+    _command(monkeypatch, {**EMPTY_COMMAND, "needs": [need]})
+    question = asyncio.run(mcp.call_tool("board_command", {})).structuredContent["needs"][0][
+        "question"
+    ]
+    assert len(question) <= 5000
+    assert question.endswith("word…")
+
+
+HUGE = "x" * 1000
+
+
+def test_hostile_board_command_is_bounded(monkeypatch):
+    """Lists and text in every field Sazed could inflate still fit 100,000 characters across
+    both copies, and the result still validates."""
+    need = {
+        **_merge_call(1),
+        "stage": [HUGE] * 50,
+        "job_status": {"x": HUGE},
+        "updated_at": [HUGE],
+        "id": HUGE * 5,
+        "pr": {**CARD["pr"], "repo": HUGE * 5, "state": [HUGE] * 50, "number": [HUGE]},
+    }
+    hostile = {
+        "needs": [need] * 200,
+        "working": [{**WORKING[0], "tools": [HUGE] * 50, "kind": HUGE * 50}] * 60,
+        "done": {"succeeded": [HUGE] * 50, "failed": HUGE, "window_hours": {"x": HUGE}},
+        "sessions": [HUGE] * 500,
+    }
+    _command(monkeypatch, hostile)
+    result = asyncio.run(mcp.call_tool("board_command", {}))
+    assert len(result.content[0].text) * 2 <= 100_000
+    assert result.structuredContent["needs_total"] == 200
+    assert _schema_errors("NeedsYouWidget", result.structuredContent) == []
+
+
+def test_hostile_board_card_is_bounded(monkeypatch):
+    """A 200 KB note, a 50 KB summary and 500 history rows fit 100,000 characters across both
+    copies: text ends with an ellipsis and the cut list says how many rows it left out."""
+    card = {
+        **CARD,
+        "note": "n " * 100_000,
+        "summary": "s" * 50_000,
+        "history": [{"at": "2026-11-26", "what": HUGE}] * 500,
+    }
+    _command(monkeypatch, card)
+    result = asyncio.run(mcp.call_tool("board_card", {"card_id": f"item:{CARD_UUID}"}))
+    out = result.structuredContent
+    assert len(result.content[0].text) * 2 <= 100_000
+    assert out["note"].endswith("…") and out["summary"].endswith("…")
+    assert out["history_omitted"] == len(card["history"]) - len(out["history"])
+    assert out["pr"]["checks"]["runs"] == CARD["pr"]["checks"]["runs"]
+    assert _schema_errors("PullRequestWidget", out) == []
+
+
+def test_a_card_too_big_for_any_cut_keeps_only_what_the_card_draws(monkeypatch):
+    """Nesting that no cut can shrink enough leaves the card's own fields and a note."""
+    nested = [[[[HUGE] * 20] * 20] * 20] * 20
+    _command(monkeypatch, {**CARD, "title": HUGE, "extra": nested})
+    result = asyncio.run(mcp.call_tool("board_card", {"card_id": f"item:{CARD_UUID}"}))
+    out = result.structuredContent
+    assert len(result.content[0].text) * 2 <= 100_000
+    assert "extra" not in out and out["truncated"]
+    assert len(out["title"]) == 300 and out["pr"]["number"] == 7
+    assert _schema_errors("PullRequestWidget", out) == []
