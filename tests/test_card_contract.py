@@ -609,3 +609,52 @@ def test_a_card_too_big_for_any_cut_keeps_only_what_the_card_draws(monkeypatch):
     assert "extra" not in out and out["truncated"]
     assert len(out["title"]) == 300 and out["pr"]["number"] == 7
     assert _schema_errors("PullRequestWidget", out) == []
+
+
+def test_a_card_that_fits_comes_back_whole(monkeypatch):
+    """A 4,266-character summary on a card well under the bound is sent uncut."""
+    card = {**CARD, "summary": "word " * 853 + "a", "history": [{"at": "x"}] * 30}
+    _command(monkeypatch, card)
+    out = asyncio.run(mcp.call_tool("board_card", {"card_id": f"item:{CARD_UUID}"}))
+    assert out.structuredContent["summary"] == card["summary"]
+    assert len(out.structuredContent["history"]) == 30
+    assert "history_omitted" not in out.structuredContent
+
+
+def test_hostile_working_rows_are_bounded(monkeypatch):
+    """Control characters grow sixfold when encoded; the guard measures the encoded JSON and
+    drops running rows too, while working_total still counts them all."""
+    row = {**WORKING[0], "title": "\u0001" * 300, "kind": "\u0001" * 50}
+    _command(monkeypatch, {**EMPTY_COMMAND, "working": [row] * 60})
+    result = asyncio.run(mcp.call_tool("board_command", {}))
+    out = result.structuredContent
+    assert len(result.content[0].text.encode()) * 2 <= 100_000
+    assert 0 < len(out["working"]) < 50
+    assert out["working_total"] == 60
+    assert _schema_errors("NeedsYouWidget", out) == []
+
+
+def _deep_dict(depth: int) -> dict:
+    value: dict = {}
+    for _ in range(depth):
+        value = {"x": value}
+    return value
+
+
+def _deep_list(depth: int) -> list:
+    value: list = []
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+@pytest.mark.parametrize("nested", [_deep_dict(400), _deep_list(2000)])
+def test_nesting_too_deep_to_walk_falls_back_to_the_card(monkeypatch, nested):
+    """Data nested past what the serialiser or recursion can walk gives the card's own fields,
+    not a tool error."""
+    _command(monkeypatch, {**CARD, "extra": nested})
+    result = asyncio.run(mcp.call_tool("board_card", {"card_id": f"item:{CARD_UUID}"}))
+    out = result.structuredContent
+    assert out["truncated"] and "extra" not in out
+    assert out["title"] == CARD["title"] and out["pr"]["number"] == 7
+    assert _schema_errors("PullRequestWidget", out) == []
