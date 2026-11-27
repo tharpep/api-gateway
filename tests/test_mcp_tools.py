@@ -20,9 +20,10 @@ DESTRUCTIVE_IDEMPOTENT = (False, True, True, False)
 GROUPS = {
     READ: """homelab_overview homelab_storage homelab_services homelab_container show_card
         calendar_today journal_summary kb_search tasks_list job_status bakeoff_status
-        learning_summary list_jobs board_list board_card board_projects board_project plan_list
-        plan_read plan_diff profile_list profile_read mcp_server_list vault_search vault_read
-        vault_list vault_backlinks vault_unresolved vault_orphans vault_tags""",
+        learning_summary list_jobs board_list board_card board_command board_projects
+        board_project plan_list plan_read plan_diff profile_list profile_read mcp_server_list
+        vault_search vault_read vault_list vault_backlinks vault_unresolved vault_orphans
+        vault_tags""",
     READ_OPEN: "multi_search",
     WRITE: """journal_add tasks_add delegate_code_task continue_job resume_job start_bakeoff
         promote_bakeoff board_file_card board_add_project board_add_workstream plan_save
